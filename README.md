@@ -77,6 +77,7 @@ Planned features / roadmap (high level)
 - BBS features (store messages, mailboxes, integration with APRS messages)
 - Live chat UI and infra (real-time messaging between stations/users)
 - Store-and-forward for APRS messages (persist messages until recipient's beacon/last-seen)
+- Real time weather alerts, from the National Weather Service's API (configurable SAME codes for area specific alerts)
 - Integration between APRS messages and BBS (route APRS messages into user mailboxes and vice‑versa)
 - Authentication/ACLs for IGate and UI changes (role-based access for operators)
 - Better tests, CI, and Docker/dev containers
