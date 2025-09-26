@@ -1,0 +1,488 @@
+const EventEmitter = require('events');
+const { unescapeStream, escapeFrame } = require('./kiss');
+const { parseAx25Frame, serviceAddressInBuffer, _callsignBase } = require('./ax25');
+
+// Silence ChannelManager internal logs by default. Set to true to enable verbose debug.
+const CM_VERBOSE = false;
+
+function parseAprsPath(frameBuf) {
+  // Very minimal APRS-like address/path parser. APRS frames are AX.25 UI frames; this is a heuristic.
+  // We'll look for ASCII text and try to find comma-separated path entries after the destination.
+  try {
+    const s = frameBuf.toString('utf8');
+    // naive: look for '>' (from>to,path,path2)
+    const gt = s.indexOf('>');
+    if (gt === -1) return [];
+    const rest = s.slice(gt + 1);
+    const parts = rest.split(',').map(p => p.trim()).filter(Boolean);
+    return parts;
+  } catch (e) { return [] }
+}
+
+class ChannelManager extends EventEmitter {
+  constructor() {
+    super();
+    this.channels = new Map();
+    this.routes = new Map(); // channelId -> Set of channelIds to cross-digipeat to
+    // seen cache: map frameHex -> { ts: Date.now(), seen: Set(channelId) }
+    this.seen = new Map();
+    this.SEEN_TTL = 5 * 1000; // 5s for easier testing
+    this.MAX_SEEN_ENTRIES = 1000; // eviction threshold
+    this.crossDigipeat = false; // when true, digipeat to all enabled channels (subject to seen-cache)
+    this.allowSelfDigipeat = true; // allow repeating back out the same channel (typical digipeater behavior)
+  }
+
+  setCrossDigipeat(v) { this.crossDigipeat = !!v; }
+
+  normalizeFrameHex(frame) {
+    // Normalize by AX.25 addresses + payload to avoid adapter-added metadata differences
+    try {
+      const parsed = require('./ax25').parseAx25Frame(frame);
+      const addrStr = (parsed.addresses || []).map(a => `${a.callsign}:${a.ssid}`).join('|');
+      const payloadHex = (parsed.payload || Buffer.alloc(0)).toString('hex');
+      return `${addrStr}|${payloadHex}`;
+    } catch (e) {
+      return frame.toString('hex');
+    }
+  }
+
+  _evictSeenIfNeeded() {
+    if (this.seen.size <= this.MAX_SEEN_ENTRIES) return;
+    // remove oldest entry
+    let oldestKey = null;
+    let oldestTs = Infinity;
+    for (const [k, v] of this.seen.entries()) {
+      if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
+    }
+    if (oldestKey) this.seen.delete(oldestKey);
+  }
+
+  addChannel({ id, name, adapter }) {
+    const opts = (arguments[0] && arguments[0].options) || {};
+    const mode = (arguments[0] && arguments[0].mode) || (opts && opts.mode) || 'digipeat';
+    // new per-channel ID options
+  const appendDigiCallsign = !!(opts && opts.appendDigiCallsign);
+  const idOnRepeat = !!(opts && opts.idOnRepeat);
+  const periodicBeaconInterval = Number((opts && opts.periodicBeaconInterval) || 0); // seconds; 0 disables
+  const periodicBeaconText = String((opts && opts.periodicBeaconText) || '') || null;
+  const ch = { id, name, adapter, enabled: true, options: opts, mode, appendDigiCallsign, idOnRepeat, periodicBeaconInterval, periodicBeaconText, _periodicBeaconTimer: null, status: { connected: true, lastRx: null, lastTx: null } };
+    this.channels.set(id, ch);
+
+    adapter.on('data', (buf) => {
+      try {
+        const cVerbose = (this.channels.get(id) && this.channels.get(id).options && this.channels.get(id).options.verbose);
+  // raw data logging suppressed
+      } catch (e) {}
+      // update lastRx timestamp and store last raw buffer (hex) for debugging
+      const c = this.channels.get(id);
+      if (c) {
+        c.status = c.status || {};
+        c.status.lastRx = Date.now();
+        try { c._lastRawRx = (buf && buf.length) ? buf.toString('hex') : null; } catch (e) { c._lastRawRx = null; }
+      }
+      this.emit('channel-status', { id, status: c && c.status });
+      this._onRawData(id, buf);
+    });
+    adapter.on('error', (err) => this.emit('adapter-error', { id, err }));
+    if (typeof adapter.on === 'function') {
+      adapter.on('open', () => { const c = this.channels.get(id); if (c) { c.status.connected = true; this.emit('channel-status', { id, status: c.status }); } });
+      adapter.on('close', () => { const c = this.channels.get(id); if (c) { c.status.connected = false; this.emit('channel-status', { id, status: c.status }); } });
+    }
+
+    // start periodic beacon if configured
+    if (ch.periodicBeaconInterval && ch.periodicBeaconInterval > 0) {
+      try {
+        // schedule interval
+        ch._periodicBeaconTimer = setInterval(() => this._sendBeaconForChannel(ch.id), ch.periodicBeaconInterval * 1000);
+        // attempt immediate send; if adapter not open, wait for adapter 'open' event
+        try {
+          this._sendBeaconForChannel(ch.id);
+        } catch (err) {
+          try {
+            if (adapter && typeof adapter.once === 'function') {
+              adapter.once('open', () => { try { this._sendBeaconForChannel(ch.id); } catch (e) {} });
+            }
+          } catch (e) { /* ignore */ }
+        }
+      } catch (e) { /* ignore timer errors */ }
+    }
+
+    return ch;
+  }
+
+  removeChannel(id) {
+    const ch = this.channels.get(id);
+    if (!ch) return false;
+    try {
+      if (ch.adapter && typeof ch.adapter.close === 'function') ch.adapter.close();
+    } catch (e) { /* ignore */ }
+    // clear any periodic timers
+    try { if (ch && ch._periodicBeaconTimer) clearInterval(ch._periodicBeaconTimer); } catch (e) {}
+    this.channels.delete(id);
+    // remove any routes referencing this channel
+    this.routes.forEach((set, from) => { if (set.has(id)) set.delete(id); });
+    this.emit('channel-removed', id);
+    return true;
+  }
+
+  listChannels() {
+    return Array.from(this.channels.values()).map(({ id, name, enabled, options, status }) => ({ id, name, enabled, options: options || {}, status: status || {} }));
+  }
+
+  addRoute(fromId, toId) {
+    if (!this.routes.has(fromId)) this.routes.set(fromId, new Set());
+    this.routes.get(fromId).add(toId);
+  }
+
+  removeRoute(fromId, toId) {
+    if (!this.routes.has(fromId)) return;
+    this.routes.get(fromId).delete(toId);
+  }
+
+  sendFrame(channelId, buf) {
+    const ch = this.channels.get(channelId);
+    if (!ch) return false;
+    // Decide whether to KISS-wrap before sending to serial adapters. We prefer raw AX.25
+    // on serial, but some TNCs use KISS over serial — detect that automatically or allow
+    // forcing via channel.options.forceKissOnSerial.
+    try {
+      const adapter = ch.adapter;
+      const forceKiss = (ch.options && ch.options.forceKissOnSerial) || false;
+      const observedKiss = adapter && !!adapter._observedKiss;
+      if (adapter && adapter.isSerial && (forceKiss || observedKiss)) {
+        const pkt = escapeFrame(buf);
+        if (CM_VERBOSE) console.log(`sendFrame -> ${channelId} (serial-kiss):`, pkt.slice(0,256).toString('hex'));
+        adapter.send(pkt);
+      } else if (adapter && adapter.isSerial) {
+        const hex = buf.slice(0,256).toString('hex');
+        if (CM_VERBOSE) console.log(`sendFrame -> ${channelId} (raw):`, hex);
+        adapter.send(buf);
+      } else {
+        const pkt = escapeFrame(buf);
+        if (CM_VERBOSE) console.log(`sendFrame -> ${channelId} (kiss):`, pkt.slice(0,256).toString('hex'));
+        ch.adapter.send(pkt);
+      }
+    } catch (e) {
+      this.emit('adapter-error', { id: channelId, err: e });
+      console.error('sendFrame adapter error', e && e.message);
+      return false;
+    }
+    ch.status = ch.status || {}; ch.status.lastTx = Date.now();
+    this.emit('channel-status', { id: channelId, status: ch.status });
+    this.emit('tx', { channel: channelId, raw: buf.toString('hex') });
+    return true;
+  }
+
+  _sendIdBeaconForChannel(channelId) {
+    // compose a short identification UI packet (no path) with payload like "Digi <callsign> ID"
+    const ch = this.channels.get(channelId);
+    if (!ch) return false;
+    const opts = ch.options || {};
+    const callsign = (opts.callsign) ? String(opts.callsign).toUpperCase() : (ch.name || ch.id).toUpperCase();
+    // build a very small AX.25 UI frame: dest APRS, src callsign, EA set on source, UI control 0x03, PID 0xF0, payload text
+    const { formatCallsign } = require('./ax25');
+    const destBuf = formatCallsign('APRS', 0);
+    const srcParts = callsign.match(/^([A-Z0-9]{1,6})(?:-(\d+))?$/);
+    const srcBase = srcParts ? srcParts[1] : callsign.slice(0,6);
+    const srcSsid = srcParts && srcParts[2] ? Number(srcParts[2]) : 0;
+    const srcBuf = formatCallsign(srcBase.slice(0,6), srcSsid);
+    // mark EA on source as last address (no path)
+    srcBuf[6] = srcBuf[6] | 0x01;
+    const control = Buffer.from([0x03]);
+    const pid = Buffer.from([0xF0]);
+    const payload = Buffer.from(`Digi ${callsign} ID`);
+    const frame = Buffer.concat([destBuf, srcBuf, control, pid, payload]);
+    return this.sendFrame(channelId, frame);
+  }
+
+  _sendBeaconForChannel(channelId) {
+    const ch = this.channels.get(channelId);
+    if (!ch) return false;
+    const opts = ch.options || {};
+    const callsign = (opts.callsign) ? String(opts.callsign).toUpperCase() : (ch.name || ch.id).toUpperCase();
+    const text = (ch.periodicBeaconText && String(ch.periodicBeaconText).trim()) ? ch.periodicBeaconText : ((opts && opts.periodicBeaconText) ? String(opts.periodicBeaconText) : null);
+    if (!text) return false; // nothing to send
+    const { formatCallsign } = require('./ax25');
+    const destBuf = formatCallsign('APRS', 0);
+    const srcParts = callsign.match(/^([A-Z0-9]{1,6})(?:-(\d+))?$/);
+    const srcBase = srcParts ? srcParts[1] : callsign.slice(0,6);
+    const srcSsid = srcParts && srcParts[2] ? Number(srcParts[2]) : 0;
+    const srcBuf = formatCallsign(srcBase.slice(0,6), srcSsid);
+    srcBuf[6] = srcBuf[6] | 0x01; // set EA
+    const control = Buffer.from([0x03]);
+    const pid = Buffer.from([0xF0]);
+    const payload = Buffer.from(text);
+    const frame = Buffer.concat([destBuf, srcBuf, control, pid, payload]);
+    return this.sendFrame(channelId, frame);
+  }
+
+  _onRawData(channelId, buf) {
+    // Buffer incoming data per channel and process complete KISS frames
+    const ch = this.channels.get(channelId);
+    const adapter = ch && ch.adapter;
+
+    // Initialize channel buffer if needed
+    if (!ch._rxBuffer) ch._rxBuffer = Buffer.alloc(0);
+    
+    // Append new data
+    ch._rxBuffer = Buffer.concat([ch._rxBuffer, buf]);
+    
+    let frames = [];
+    
+    // Look for complete KISS frames (data between FEND bytes)
+    if (ch._rxBuffer.indexOf(0xC0) !== -1) {
+      // Mark as KISS-capable adapter
+      if (adapter) adapter._observedKiss = true;
+      
+      // Process all complete frames
+      let processed = 0;
+      while (true) {
+        const startFend = ch._rxBuffer.indexOf(0xC0, processed);
+        if (startFend === -1) break;
+        
+        const endFend = ch._rxBuffer.indexOf(0xC0, startFend + 1);
+        if (endFend === -1) break; // No complete frame yet
+        
+        // Extract frame data (skip FEND bytes)
+        const frameData = ch._rxBuffer.slice(startFend + 1, endFend);
+        if (frameData.length > 0) {
+          try {
+            // Parse KISS frame - remove command byte if present  
+            let ax25Data = frameData;
+            if (ax25Data[0] <= 0x1F) ax25Data = ax25Data.slice(1); // Remove KISS command
+            if (ax25Data.length > 0) frames.push(ax25Data);
+          } catch (e) {
+            // Skip invalid frames
+          }
+        }
+        processed = endFend + 1;
+      }
+      
+      // Keep unprocessed data
+      ch._rxBuffer = ch._rxBuffer.slice(processed);
+    } else if (ch._rxBuffer.length > 1000) {
+      // If buffer gets too large without KISS framing, treat as raw AX.25 and reset
+      if (ch._rxBuffer.length > 0) frames.push(ch._rxBuffer);
+      ch._rxBuffer = Buffer.alloc(0);
+    }
+
+    frames.forEach((frame) => {
+      // emit frame event
+      const event = { channel: channelId, raw: frame.toString('hex'), length: frame.length };
+      try {
+        const verbose = (ch && ch.options && ch.options.verbose);
+  // parsed frame logging suppressed
+      } catch (e) {}
+      this.emit('frame', event);
+
+      // parse AX.25 addresses
+      let parsed;
+      try {
+        parsed = parseAx25Frame(frame);
+      } catch (e) {
+        // fallback: don't attempt path-aware digipeat
+        this.emit('parse-error', { channel: channelId, err: e });
+        return;
+      }
+
+      // If this receiving channel is not configured as a digipeater, do not attempt to service
+      // path entries or forward frames.
+      const recvCh = this.channels.get(channelId);
+      if (!recvCh || (recvCh.mode && recvCh.mode !== 'digipeat')) {
+        return; // just emit frame event and return (we already emitted above)
+      }
+
+      const addresses = parsed.addresses || [];
+      // AX.25: addresses[0]=dest, [1]=source, [2...] = path
+      const pathAddrs = addresses.slice(2).map(a => ({ callsign: a.callsign, ssid: a.ssid, marked: !!a.marked }));
+
+      // Debug: log parsed addresses when verbose
+      try {
+        const verbose = (recvCh && recvCh.options && recvCh.options.verbose);
+        // parsed addresses logging suppressed
+      } catch (e) {}
+
+      // seen-cache housekeeping
+      const key = frame.toString('hex');
+      const now = Date.now();
+      const entry = this.seen.get(key) || { ts: now, seen: new Set() };
+      // remove old entries if stale
+      if (now - entry.ts > this.SEEN_TTL) {
+        entry.ts = now;
+        entry.seen = new Set();
+      }
+      // If self-digipeat is disabled, mark source channel as having seen this frame
+      // immediately to prevent sending back to origin. If self-digipeat is allowed,
+      // we defer marking until after we send so the channel can be used as a target.
+      if (!this.allowSelfDigipeat) {
+        entry.seen.add(channelId);
+      }
+      this.seen.set(key, entry);
+
+      // digipeat targets: by default only configured routes; if crossDigipeat enabled, include all enabled channels
+      const routeTargets = this.routes.get(channelId) ? Array.from(this.routes.get(channelId)) : [];
+      const allTargets = new Set(routeTargets);
+      if (this.crossDigipeat) {
+        this.channels.forEach((ch, id) => { if (id !== channelId && ch.enabled) allTargets.add(id); });
+      }
+
+      // Debug: log digipeat targets when verbose
+      try {
+        const verbose = (recvCh && recvCh.options && recvCh.options.verbose);
+  // digipeat targets logging suppressed
+      } catch (e) {}
+
+      allTargets.forEach((targetId) => {
+        // Debug: log forEach entry
+        try {
+          const verbose = (recvCh && recvCh.options && recvCh.options.verbose);
+          // per-target iteration logging suppressed
+        } catch (e) {}
+        
+        // If self-digipeat is disabled, never send back to originating channel unless explicitly routed to itself
+        if (!this.allowSelfDigipeat && targetId === channelId) {
+          try {
+            const verbose = (recvCh && recvCh.options && recvCh.options.verbose);
+            // skipping self-digipeat logging suppressed
+          } catch (e) {}
+          return;
+        }
+        // skip if already seen on this target
+        if (entry.seen.has(targetId)) {
+          try {
+            const verbose = (recvCh && recvCh.options && recvCh.options.verbose);
+            // already-seen skip logging suppressed
+          } catch (e) {}
+          return;
+        }
+        const target = this.channels.get(targetId);
+        if (!target) return;
+
+        // determine callsign for this channel (assumption: options.callsign or name or id)
+        const targetCall = (target.options && target.options.callsign) || target.name || target.id;
+        if (!targetCall) return;
+
+        // Debug: log target evaluation when verbose
+        try {
+          const verbose = (target.options && target.options.verbose);
+          // target evaluation logging suppressed
+        } catch (e) {}
+
+        // A digipeater should service frames if:
+        // 1. Path contains its own callsign (unmarked), OR
+        // 2. Path contains WIDE entries with remaining hops (any digipeater can service these)
+        const callsignMatch = pathAddrs.findIndex(p => p.callsign && p.callsign.toUpperCase() === targetCall.toUpperCase() && !p.marked);
+        const wideMatch = pathAddrs.findIndex(p => p.callsign && /^WIDE/i.test(p.callsign) && (typeof p.ssid === 'number' ? p.ssid > 0 : true));
+
+        let toMark = null;
+        if (callsignMatch !== -1) {
+          toMark = pathAddrs[callsignMatch].callsign;
+        } else if (wideMatch !== -1) {
+          toMark = pathAddrs[wideMatch].callsign;
+        }
+
+        if (!toMark) {
+          // nothing to service for this target
+          try {
+            const verbose = (target.options && target.options.verbose);
+            // no-serviceable entry logging suppressed
+          } catch (e) {}
+          return;
+        }
+        
+        // Special-case: a configured route target of 'igate' forwards to an external IGate
+        if (String(targetId).toLowerCase() === 'igate') {
+          try {
+            const verbose = (manager && manager.channels && manager.channels.get && (this.channels.get(channelId) && this.channels.get(channelId).options && this.channels.get(channelId).options.verbose));
+            // service the frame as usual (decrement WIDE or set H-bit)
+            let servicedBuf = serviceAddressInBuffer(frame, toMark);
+            // emit an igate event so external code can forward to the IGate network
+            this.emit('igate', { from: channelId, raw: frame.toString('hex'), parsed: parsed, serviced: toMark, servicedBuf });
+            // explicit IGate log for visibility
+            // IGate forward logged at Igate client
+          } catch (e) {}
+          // mark seen for this pseudo-target so we don't loop
+          entry.seen.add('igate');
+          this.seen.set(key, entry);
+          return;
+        }
+
+        try {
+          const verbose = (target.options && target.options.verbose);
+          // will-service logging suppressed
+        } catch (e) {}
+        
+        // prepare frame to send: service (decrement WIDE or mark) the matched path entry
+        let servicedBuf = serviceAddressInBuffer(frame, toMark);
+        // If this target channel is configured to append its own callsign into the path, do so.
+        // We insert the target's callsign into the path in place of the serviced entry when appendDigiCallsign is true.
+        try {
+          const targetOpts = target.options || {};
+          // Unconditional debug logging for diagnosing append behavior
+          try { /* target append flags logging suppressed */ } catch (e) {}
+           // Respect append flag stored on channel object or in options
+           const shouldAppendDigiCallsign = !!(target.appendDigiCallsign || targetOpts.appendDigiCallsign);
+          try { /* shouldAppendDigiCallsign logging suppressed */ } catch (e) {}
+           if (shouldAppendDigiCallsign) {
+             // find offset of the serviced address in the servicedBuf by scanning address fields
+             const sf = Buffer.from(servicedBuf);
+             const { parseAddressField } = require('./ax25');
+             let off = 0;
+             let found = false;
+            // Dump address fields for debugging
+            try { /* address fields logging suppressed */ } catch (e) {}
+             while (off + 7 <= sf.length) {
+               const a = parseAddressField(sf, off);
+               try { /* compare logging suppressed */ } catch (e) {}
+               if (a && a.callsign && _callsignBase(a.callsign) === _callsignBase(toMark)) {
+                 // replace this 7-byte block with the target's callsign formatted
+                 const { formatCallsign } = require('./ax25');
+                 const tgtCall = (targetOpts.callsign) ? String(targetOpts.callsign).toUpperCase() : target.name || target.id;
+                try { /* matched address logging suppressed */ } catch (e) {}
+                 const m = String(tgtCall).toUpperCase().match(/^([A-Z0-9]{1,6})(?:-(\d+))?$/);
+                 const base = m ? m[1].slice(0,6) : String(tgtCall).slice(0,6);
+                 const ssid = m && m[2] ? Number(m[2]) : 0;
+                 const newAddr = formatCallsign(base, ssid);
+                 // preserve EA bit from original
+                 newAddr[6] = (sf[off + 6] & 0x01) ? (newAddr[6] | 0x01) : (newAddr[6] & ~0x01);
+                 // set H-bit on the inserted address to indicate it was used
+                 newAddr[6] = newAddr[6] | 0x80;
+                 // write back
+                 for (let i = 0; i < 7; i++) sf[off + i] = newAddr[i];
+                 found = true;
+                 try { /* appended digi callsign logging suppressed */ } catch (e) {}
+                 break;
+               }
+               off += 7;
+               if (a && a.last) break;
+             }
+             if (found) servicedBuf = sf;
+           }
+        } catch (e) {
+          // if anything goes wrong with append, fall back to servicedBuf
+        }
+
+        try {
+          // Use sendFrame() to handle proper KISS wrapping for all adapter types
+          // sending serviced frame logging suppressed
+          this.sendFrame(targetId, servicedBuf);
+          this.emit('digipeat', { from: channelId, to: targetId, raw: frame.toString('hex'), serviced: toMark });
+          try { /* digipeat forwarded logging suppressed */ } catch (e) {}
+          // record that target has seen this frame to prevent immediate reprocessing
+          entry.seen.add(targetId);
+          // if we just sent back to the originating channel, ensure the source is marked
+          if (targetId === channelId) entry.seen.add(channelId);
+          this.seen.set(key, entry);
+          // optionally emit an immediate ID beacon for this target channel
+          if (target.idOnRepeat) {
+            try { this._sendIdBeaconForChannel(targetId); } catch (e) { /* ignore */ }
+          }
+        } catch (e) {
+          this.emit('digipeat-error', { from: channelId, to: targetId, err: e });
+        }
+      });
+    });
+  }
+}
+
+module.exports = ChannelManager;

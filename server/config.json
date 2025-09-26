@@ -1,0 +1,78 @@
+{
+  "channels": [
+    {
+      "id": "radio1",
+      "name": "Serial Radio 1",
+      "type": "kiss-tcp",
+      "enabled": true,
+      "options": {
+        "igate": true,
+        "callsign": "NA4WX-9",
+        "host": "127.0.0.1",
+        "port": 8100,
+        "baud": 57600,
+        "dataBits": 8,
+        "stopBits": 1,
+        "parity": "none",
+        "rtscts": false,
+        "xon": false,
+        "xoff": false,
+        "verbose": true,
+        "forceKissOnSerial": true,
+        "appendDigiCallsign": true,
+        "idOnRepeat": false,
+        "periodicBeaconText": "NA4WX NexDigi - At my house.",
+        "periodicBeaconInterval": 1800
+      },
+      "mode": "digipeat",
+      "status": {
+        "connected": true,
+        "lastRx": null,
+        "lastTx": 1758890437781
+      },
+      "runtime": false
+    },
+    {
+      "id": "radio2",
+      "name": "991",
+      "type": "serial",
+      "enabled": true,
+      "options": {
+        "igate": false,
+        "callsign": "NA4WX-8",
+        "host": "127.0.0.1",
+        "port": "COM9",
+        "baud": 57600,
+        "dataBits": 8,
+        "stopBits": 1,
+        "parity": "none",
+        "rtscts": false,
+        "xon": false,
+        "xoff": false,
+        "verbose": true,
+        "targets": [
+          "radio1"
+        ]
+      },
+      "mode": "none"
+    }
+  ],
+  "routes": [
+    {
+      "from": "radio1",
+      "to": "radio1"
+    },
+    {
+      "from": "radio2",
+      "to": "radio1"
+    }
+  ],
+  "igate": {
+    "enabled": true,
+    "host": "noam.aprs2.net",
+    "port": 14580,
+    "call": "NA4WX",
+    "pass": "20980",
+    "channels": []
+  }
+}
