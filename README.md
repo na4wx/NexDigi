@@ -23,28 +23,49 @@ Server runs on port 3000, client on Vite default 5173.
 
 Current features
 
-- Server: Node.js + Express + WebSocket streaming for frames and events
-- Client: React + Vite + Material-UI settings UI (Channels, IGate)
-- Channel adapters:
-  - Serial KISS adapter (serialport) with auto-detection and write-queueing
-  - KISS-TCP / SoundModem adapter for networked KISS servers
-  - Mock adapter for testing
-- AX.25 utilities:
-  - Parsing of AX.25 frames and address fields
-  - Digipeat servicing (WIDE and explicit digi callsign servicing)
-  - Optionally append the digi callsign into the path when servicing
-- Channel management:
-  - Per-channel configuration (callsign, mode, igate, targets, serial/kiss options)
-  - Per-channel enable/disable and reconnect endpoint
-  - Per-channel periodic beacon support
-  - Per-channel IGate toggle (global IGate client can be enabled/disabled)
-- IGate client:
-  - TCP client that logs in to APRS-IS (user/pass/port) and forwards parsed frames when enabled
-  - Status endpoint (`/api/igate/status`) for UI visibility
-- Debug and admin endpoints:
-  - `/api/channels`, `/api/channels/:id/debug`, `/api/serial-ports`, `/api/serial-probe`, `/api/probe`, `/api/frames`
-  - Recent frame ring buffer for the UI
-- Routing: lightweight per-channel routes to specify cross-digipeat targets
+NexDigi is a modern APRS digipeater foundation with the following capabilities:
+
+### Multi-channel support
+- **Multiple radios/channels**: Configure and manage multiple channels, each representing a radio or connection.
+- **Channel types**:
+  - Serial KISS adapter: Supports direct serial connections to TNCs (e.g., hardware modems).
+  - KISS-TCP adapter: Connects to networked KISS servers (e.g., SoundModem).
+  - Mock adapter: Simulates channels for testing and development.
+
+### Digipeating and routing
+- **Cross-digipeating**: Define routes between channels to enable cross-digipeating (e.g., forwarding frames from one radio to another).
+- **Selective digipeating**: Service WIDE paths or explicit digipeater callsigns.
+- **Path modification**: Optionally append the digipeater's callsign to the path when servicing frames.
+- **Loop prevention**: Implements a seen-cache with TTL and eviction to avoid frame loops.
+
+### IGate integration
+- **Global IGate client**: Forward frames to APRS-IS when enabled.
+- **Per-channel IGate toggle**: Selectively enable or disable IGate forwarding for individual channels.
+- **Status visibility**: View IGate connection status and activity in the UI.
+
+### Channel management
+- **Per-channel configuration**: Customize callsign, mode (e.g., digipeat), IGate settings, and adapter options (e.g., serial port, baud rate).
+- **Dynamic control**: Enable, disable, or reconnect channels on the fly.
+- **Periodic beacons**: Configure periodic beacon transmissions for each channel.
+
+### Debugging and admin tools
+- **API endpoints**:
+  - `/api/channels`: Manage channels (list, create, update, delete).
+  - `/api/routes`: Manage cross-digipeat routes.
+  - `/api/serial-ports`: Discover available serial ports.
+  - `/api/frames`: View recent frames.
+- **Diagnostics**: Verbose logging and debug endpoints for troubleshooting.
+
+### AX.25 utilities
+- **Frame parsing**: Decode AX.25 frames and address fields.
+- **SSID handling**: Supports WIDEn-N decrementing and H-bit marking for serviced entries.
+
+### Frontend features
+- **Settings UI**: Manage channels and IGate settings via a React + Material-UI interface.
+- **Channel actions**: Perform actions like Edit, Beacon, Probe, Reconnect, and Delete directly from the UI.
+- **Real-time updates**: View live frame activity and channel status.
+
+These features make NexDigi a flexible and powerful foundation for building APRS digipeaters with modern tools.
 
 What you can do today
 1. Edit `server/config.json` to add or change channels and IGate settings.
