@@ -61,7 +61,8 @@ class ChannelManager extends EventEmitter {
     const opts = (arguments[0] && arguments[0].options) || {};
     const mode = (arguments[0] && arguments[0].mode) || (opts && opts.mode) || 'digipeat';
     // new per-channel ID options
-  const appendDigiCallsign = !!(opts && opts.appendDigiCallsign);
+  // Accept either `appendDigiCallsign` (legacy internal) or `appendCallsign` (UI/persisted) from options
+  const appendDigiCallsign = !!(opts && (opts.appendDigiCallsign || opts.appendCallsign));
   const idOnRepeat = !!(opts && opts.idOnRepeat);
   const periodicBeaconInterval = Number((opts && opts.periodicBeaconInterval) || 0); // seconds; 0 disables
   const periodicBeaconText = String((opts && opts.periodicBeaconText) || '') || null;
@@ -202,6 +203,10 @@ class ChannelManager extends EventEmitter {
     const callsign = (opts.callsign) ? String(opts.callsign).toUpperCase() : (ch.name || ch.id).toUpperCase();
     const text = (ch.periodicBeaconText && String(ch.periodicBeaconText).trim()) ? ch.periodicBeaconText : ((opts && opts.periodicBeaconText) ? String(opts.periodicBeaconText) : null);
     if (!text) return false; // nothing to send
+    
+    // Format as proper APRS status message (starts with '>')
+    const formattedText = text.startsWith('>') ? text : `>${text}`;
+    
     const { formatCallsign } = require('./ax25');
     const destBuf = formatCallsign('APRS', 0);
     const srcParts = callsign.match(/^([A-Z0-9]{1,6})(?:-(\d+))?$/);
@@ -211,12 +216,12 @@ class ChannelManager extends EventEmitter {
     srcBuf[6] = srcBuf[6] | 0x01; // set EA
     const control = Buffer.from([0x03]);
     const pid = Buffer.from([0xF0]);
-    const payload = Buffer.from(text);
+    const payload = Buffer.from(formattedText);
     const frame = Buffer.concat([destBuf, srcBuf, control, pid, payload]);
     return this.sendFrame(channelId, frame);
   }
 
-  _onRawData(channelId, buf) {
+  async _onRawData(channelId, buf) {
     // Buffer incoming data per channel and process complete KISS frames
     const ch = this.channels.get(channelId);
     const adapter = ch && ch.adapter;
@@ -266,7 +271,8 @@ class ChannelManager extends EventEmitter {
       ch._rxBuffer = Buffer.alloc(0);
     }
 
-    frames.forEach((frame) => {
+    // Process all frames in parallel
+    await Promise.all(frames.map(async (frame) => {
       // emit frame event
       const event = { channel: channelId, raw: frame.toString('hex'), length: frame.length };
       try {
@@ -332,7 +338,8 @@ class ChannelManager extends EventEmitter {
   // digipeat targets logging suppressed
       } catch (e) {}
 
-      allTargets.forEach((targetId) => {
+      // Process all targets in parallel instead of sequentially
+      const digipeatingPromises = Array.from(allTargets).map(async (targetId) => {
         // Debug: log forEach entry
         try {
           const verbose = (recvCh && recvCh.options && recvCh.options.verbose);
@@ -421,7 +428,8 @@ class ChannelManager extends EventEmitter {
           // Unconditional debug logging for diagnosing append behavior
           try { /* target append flags logging suppressed */ } catch (e) {}
            // Respect append flag stored on channel object or in options
-           const shouldAppendDigiCallsign = !!(target.appendDigiCallsign || targetOpts.appendDigiCallsign);
+           // Respect both runtime flag and options which may use 'appendDigiCallsign' or 'appendCallsign'
+           const shouldAppendDigiCallsign = !!(target.appendDigiCallsign || targetOpts.appendDigiCallsign || targetOpts.appendCallsign);
           try { /* shouldAppendDigiCallsign logging suppressed */ } catch (e) {}
            if (shouldAppendDigiCallsign) {
              // find offset of the serviced address in the servicedBuf by scanning address fields
@@ -481,7 +489,96 @@ class ChannelManager extends EventEmitter {
           this.emit('digipeat-error', { from: channelId, to: targetId, err: e });
         }
       });
-    });
+
+      // Wait for all digipeating operations to complete in parallel
+      await Promise.all(digipeatingPromises);
+    }));
+  }
+
+  activateChannel(channel) {
+    if (channel.mode === 'Packet' || channel.mode === 'Digipeat + Packet') {
+      console.log(`Activating BBS for channel ${channel.id}`);
+      channel.bbs = new BBS();
+    }
+
+    if (channel.mode === 'Digipeat' || channel.mode === 'Digipeat + Packet') {
+      console.log(`Activating Digipeat for channel ${channel.id}`);
+      // Existing digipeat activation logic
+    }
+  }
+
+  sendAPRSMessage(options) {
+    const { from, to, payload, channel, path } = options;
+    
+    if (!from || !to || !payload || !channel) {
+      console.error('sendAPRSMessage: Missing required parameters');
+      return false;
+    }
+
+    const ch = this.channels.get(channel);
+    if (!ch || !ch.enabled || !ch.adapter) {
+      console.error(`sendAPRSMessage: Channel ${channel} not available`);
+      return false;
+    }
+
+    try {
+    // Build AX.25 UI frame for APRS message
+  const { formatCallsign } = require('./ax25');
+      
+      // Parse callsigns and SSIDs
+      const parseCall = (call) => {
+        const match = call.match(/^([A-Z0-9]{1,6})(?:-(\d+))?$/);
+        return match ? { call: match[1], ssid: parseInt(match[2] || '0') } : { call: call.slice(0, 6), ssid: 0 };
+      };
+
+  const fromParsed = parseCall(from.toUpperCase());
+  const toParsed = parseCall(to.toUpperCase());
+
+  // Build addresses: dest should be 'APRS' for APRS UI frames; source is our BBS callsign
+  // destination
+  const destAddr = formatCallsign((toParsed && toParsed.call) ? toParsed.call : 'APRS', (toParsed && !isNaN(toParsed.ssid)) ? toParsed.ssid : 0);
+      const srcAddr = formatCallsign(fromParsed.call, fromParsed.ssid);
+      // If no path specified, mark source EA (no path); otherwise build header with path entries
+      const pathParts = (path && typeof path === 'string') ? path.split(',').map(p => p.trim()).filter(Boolean) : [];
+      let header;
+      if (pathParts.length === 0) {
+        srcAddr[6] = srcAddr[6] | 0x01; // Set EA bit on source (last address)
+        header = Buffer.concat([destAddr, srcAddr]);
+      } else {
+        // Build full address list: dest, src, path...
+        const addrs = [destAddr, srcAddr];
+        const { formatCallsign: fmt } = require('./ax25');
+        pathParts.forEach((p, idx) => {
+          // Attempt to parse SSID if provided like WIDE1-1
+          const m = p.match(/^([A-Z0-9-]{1,6})(?:-(\d+))?$/i);
+          const base = m ? m[1] : p.slice(0,6);
+          const ssid = m && m[2] ? Number(m[2]) : 0;
+          const pb = fmt(base.toUpperCase().slice(0,6), ssid);
+          // For path entries, mark as not last unless final
+          if (idx === pathParts.length - 1) pb[6] = pb[6] | 0x01; // mark EA on last
+          addrs.push(pb);
+        });
+        header = Buffer.concat(addrs);
+      }
+      const control = Buffer.from([0x03]); // UI frame
+      const pid = Buffer.from([0xF0]); // No layer 3
+      const payloadBuf = Buffer.from(payload);
+
+      const frame = Buffer.concat([header, control, pid, payloadBuf]);
+
+      // Send the frame
+  const success = this.sendFrame(channel, frame);
+      if (success) {
+        console.log(`sendAPRSMessage: Sent message from ${from} to ${to} via ${channel}`);
+      } else {
+        console.error(`sendAPRSMessage: Failed to send message via ${channel}`);
+      }
+
+      return success;
+    } catch (error) {
+      console.error('sendAPRSMessage: Error building/sending frame:', error);
+      return false;
+    }
   }
 }
 

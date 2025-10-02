@@ -8,15 +8,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "@mui/material": "5.15.0",
-    "@mui/icons-material": "5.11.0",
     "@emotion/react": "11.11.0",
-    "@emotion/styled": "11.11.0"
+    "@emotion/styled": "11.11.0",
+    "@mui/icons-material": "5.11.0",
+    "@mui/material": "5.15.0",
+    "axios": "^1.12.2",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
-    "vite": "^4.4.9",
-    "@vitejs/plugin-react": "4.0.0"
+    "@vitejs/plugin-react": "4.0.0",
+    "vite": "^4.4.9"
   }
 }

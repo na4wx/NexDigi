@@ -1,0 +1,21 @@
+[Unit]
+Description=NexDigi APRS Digipeater Service
+After=network.target
+
+[Service]
+Type=simple
+User=nexdigi
+Group=dialout
+WorkingDirectory=/opt/nexdigi
+# Load environment variables from /etc/default/nexdigi if present. Leading '-' ignores missing file.
+EnvironmentFile=-/etc/default/nexdigi
+ExecStart=/usr/bin/node /opt/nexdigi/server/index.js
+Restart=on-failure
+RestartSec=5s
+# Basic hardening
+ProtectSystem=full
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

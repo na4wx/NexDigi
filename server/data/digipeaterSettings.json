@@ -1,0 +1,36 @@
+{
+  "enabled": true,
+  "channels": {
+    "radio1": {
+      "callsign": "NA4WX-9",
+      "mode": "receive-only"
+    },
+    "radio2": {
+      "mode": "digipeat",
+      "callsign": "na4wx-5",
+      "appendCallsign": true
+    }
+  },
+  "routes": [
+    {
+      "from": "radio2",
+      "to": "radio2"
+    },
+    {
+      "from": "radio1",
+      "to": "radio2"
+    }
+  ],
+  "nwsAlerts": {
+    "enabled": true,
+    "pollIntervalSec": 120,
+    "sameCodes": [
+      "037005",
+      "037031"
+    ],
+    "alertPath": "WIDE1-1",
+    "area": "NC",
+    "recentlySentTTL": 1800,
+    "repeatExternalBulletins": false
+  }
+}
