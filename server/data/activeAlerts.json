@@ -106,5 +106,113 @@
         }
       ]
     }
+  },
+  "urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.1": {
+    "hash": "82c2c68b5b517c31e5c1dab9dd3cb3c89c61d0b7",
+    "lastSent": 1759429603,
+    "alert": {
+      "id": "urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.1",
+      "same": [
+        "037031"
+      ],
+      "event": "Coastal Flood Advisory",
+      "headline": "Coastal Flood Advisory issued October 2 at 2:26PM EDT until October 3 at 8:00PM EDT by NWS Newport/Morehead City NC",
+      "area": "East Carteret",
+      "effective": "2025-10-02T14:26:00-04:00",
+      "expires": "2025-10-03T02:30:00-04:00",
+      "description": "* WHAT...For the Coastal Flood Advisory, 1 to 2 feet of inundation\nabove ground level in low-lying areas near shorelines and tidal\nwaterways. For the High Surf Advisory, large breaking waves of 7\nto 10 feet in the surf zone. For the Beach Hazards Statement,\ndangerous rip currents.\n\n* WHERE...East Carteret County.\n\n* WHEN...For the Coastal Flood Advisory, until 8 PM EDT Friday.\nFor the High Surf Advisory, until 8 AM EDT Saturday. For the\nBeach Hazards Statement, until 8 PM EDT this evening.\n\n* IMPACTS...Flooding of lots, parks, and roads with only\nisolated road closures expected. Dangerous swimming and\nsurfing conditions and localized beach erosion. Rip currents\ncan sweep even the best swimmers away from shore into deeper\nwater.",
+      "instruction": "If travel is required, allow extra time as some roads may be\nclosed. Do not drive around barricades or through water of\nunknown depth. Take the necessary actions to protect flood-prone\nproperty.\n\nInexperienced swimmers should remain out of the water due to\ndangerous surf conditions.\n\nLife-threatening rip currents. If caught in a rip current, remain\ncalm. Swim in a direction following the shoreline. If tired,\nfloat or tread water until out of the rip current. If unable to\nescape, face the shore and call or wave for help.",
+      "url": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.1",
+      "bulletin": {
+        "frames": [
+          {
+            "to": "BLN4FLD",
+            "dest": "BLN4FL",
+            "text": "SAME:037031 COASTAL FLOOD ADVISORY EAST CARTERET TIL 2: 30 AM"
+          }
+        ]
+      },
+      "bulletinTag": "ALLWX",
+      "bulletinDest": "ALLWX",
+      "frames": [
+        {
+          "to": "BLN4FLD",
+          "dest": "BLN4FL",
+          "text": "SAME:037031 COASTAL FLOOD ADVISORY EAST CARTERET TIL 2: 30 AM"
+        }
+      ]
+    }
+  },
+  "urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.2": {
+    "hash": "e97bc7de7c25bdfc6cfb100f1b02f9bafe83703a",
+    "lastSent": 1759429603,
+    "alert": {
+      "id": "urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.2",
+      "same": [
+        "037031"
+      ],
+      "event": "High Surf Advisory",
+      "headline": "High Surf Advisory issued October 2 at 2:26PM EDT until October 4 at 8:00AM EDT by NWS Newport/Morehead City NC",
+      "area": "East Carteret",
+      "effective": "2025-10-02T14:26:00-04:00",
+      "expires": "2025-10-03T02:30:00-04:00",
+      "description": "* WHAT...For the Coastal Flood Advisory, 1 to 2 feet of inundation\nabove ground level in low-lying areas near shorelines and tidal\nwaterways. For the High Surf Advisory, large breaking waves of 7\nto 10 feet in the surf zone. For the Beach Hazards Statement,\ndangerous rip currents.\n\n* WHERE...East Carteret County.\n\n* WHEN...For the Coastal Flood Advisory, until 8 PM EDT Friday.\nFor the High Surf Advisory, until 8 AM EDT Saturday. For the\nBeach Hazards Statement, until 8 PM EDT this evening.\n\n* IMPACTS...Flooding of lots, parks, and roads with only\nisolated road closures expected. Dangerous swimming and\nsurfing conditions and localized beach erosion. Rip currents\ncan sweep even the best swimmers away from shore into deeper\nwater.",
+      "instruction": "If travel is required, allow extra time as some roads may be\nclosed. Do not drive around barricades or through water of\nunknown depth. Take the necessary actions to protect flood-prone\nproperty.\n\nInexperienced swimmers should remain out of the water due to\ndangerous surf conditions.\n\nLife-threatening rip currents. If caught in a rip current, remain\ncalm. Swim in a direction following the shoreline. If tired,\nfloat or tread water until out of the rip current. If unable to\nescape, face the shore and call or wave for help.",
+      "url": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.2",
+      "bulletin": {
+        "frames": [
+          {
+            "to": "BLN1WX",
+            "dest": "BLN1WX",
+            "text": "SAME:037031 HIGH SURF ADVISORY EAST CARTERET TIL 2: 30 AM"
+          }
+        ]
+      },
+      "bulletinTag": "ALLWX",
+      "bulletinDest": "ALLWX",
+      "frames": [
+        {
+          "to": "BLN1WX",
+          "dest": "BLN1WX",
+          "text": "SAME:037031 HIGH SURF ADVISORY EAST CARTERET TIL 2: 30 AM"
+        }
+      ]
+    }
+  },
+  "urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.3": {
+    "hash": "19c2a184eb625b7a62876fb4b63c7351a53d4df3",
+    "lastSent": 1759429603,
+    "alert": {
+      "id": "urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.3",
+      "same": [
+        "037031"
+      ],
+      "event": "Beach Hazards Statement",
+      "headline": "Beach Hazards Statement issued October 2 at 2:26PM EDT until October 2 at 8:00PM EDT by NWS Newport/Morehead City NC",
+      "area": "East Carteret",
+      "effective": "2025-10-02T14:26:00-04:00",
+      "expires": "2025-10-03T02:30:00-04:00",
+      "description": "* WHAT...For the Coastal Flood Advisory, 1 to 2 feet of inundation\nabove ground level in low-lying areas near shorelines and tidal\nwaterways. For the High Surf Advisory, large breaking waves of 7\nto 10 feet in the surf zone. For the Beach Hazards Statement,\ndangerous rip currents.\n\n* WHERE...East Carteret County.\n\n* WHEN...For the Coastal Flood Advisory, until 8 PM EDT Friday.\nFor the High Surf Advisory, until 8 AM EDT Saturday. For the\nBeach Hazards Statement, until 8 PM EDT this evening.\n\n* IMPACTS...Flooding of lots, parks, and roads with only\nisolated road closures expected. Dangerous swimming and\nsurfing conditions and localized beach erosion. Rip currents\ncan sweep even the best swimmers away from shore into deeper\nwater.",
+      "instruction": "If travel is required, allow extra time as some roads may be\nclosed. Do not drive around barricades or through water of\nunknown depth. Take the necessary actions to protect flood-prone\nproperty.\n\nInexperienced swimmers should remain out of the water due to\ndangerous surf conditions.\n\nLife-threatening rip currents. If caught in a rip current, remain\ncalm. Swim in a direction following the shoreline. If tired,\nfloat or tread water until out of the rip current. If unable to\nescape, face the shore and call or wave for help.",
+      "url": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.587e865c49a1ecd70bd8b16b08d1a0c515505056.004.3",
+      "bulletin": {
+        "frames": [
+          {
+            "to": "BLN1WX",
+            "dest": "BLN1WX",
+            "text": "SAME:037031 BEACH HAZARDS STATEMENT EAST CARTERET TIL 2: 30 AM"
+          }
+        ]
+      },
+      "bulletinTag": "ALLWX",
+      "bulletinDest": "ALLWX",
+      "frames": [
+        {
+          "to": "BLN1WX",
+          "dest": "BLN1WX",
+          "text": "SAME:037031 BEACH HAZARDS STATEMENT EAST CARTERET TIL 2: 30 AM"
+        }
+      ]
+    }
   }
 }
