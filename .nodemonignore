@@ -1,0 +1,6 @@
+server/data/**
+server/data/*
+server/data/*.json
+*.json
+client/dist/**
+node_modules/**

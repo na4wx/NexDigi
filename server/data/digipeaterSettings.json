@@ -3,7 +3,7 @@
   "channels": {
     "radio1": {
       "callsign": "NA4WX-9",
-      "mode": "receive-only"
+      "mode": "disabled"
     },
     "radio2": {
       "mode": "digipeat",
