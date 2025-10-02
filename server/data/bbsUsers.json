@@ -1,0 +1,16 @@
+{
+  "users": {
+    "N0CALL-1": {
+      "name": null,
+      "qth": null,
+      "lastSeen": "2025-10-01T15:26:51.824Z",
+      "connectCount": 12
+    },
+    "NA4WX": {
+      "name": "Jordan",
+      "qth": "Maryville, TN",
+      "lastSeen": "2025-10-01T17:54:49.618Z",
+      "connectCount": 8
+    }
+  }
+}

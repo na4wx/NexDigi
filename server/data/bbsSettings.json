@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "callsign": "NA4WX-7",
+  "channels": [
+    "radio2"
+  ],
+  "frameDelayMs": 1000
+}

@@ -120,3 +120,206 @@ PRs welcome. If you'd like me to wire more UI controls (per-channel adapter stat
 Copyright (c) 2025 Jordan G Webb, NA4WX
 
 This project is licensed under the MIT License — see the `LICENSE` file for details.
+
+## Platform-specific setup
+
+Below are quick, tested setup notes for Debian-based Linux and Windows. They cover prerequisites, node installation, serial device permissions, and guidance for using the adapters included in this project.
+
+### Debian / Ubuntu (recommended steps)
+
+1. Install system prerequisites (build tools and libudev headers for native modules):
+
+```bash
+sudo apt update
+sudo apt install -y build-essential python3 pkg-config curl libudev-dev git
+```
+
+2. Install Node.js (LTS). Example (NodeSource):
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+3. Add your user to the `dialout` group to access serial ports (logout/login required):
+
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+4. Install project dependencies and the client:
+
+```bash
+git clone <repo-url>
+cd NexDigi
+npm install
+cd client
+npm install
+```
+
+5. Configure `server/config.json` to add channels. For simple local testing without hardware, add a `mock` channel.
+
+6. Start the server (development):
+
+```bash
+# from repo root
+npm run dev:server
+# or run both client+server in dev:
+npm run dev
+```
+
+Notes for Debian:
+- If you use serial adapters, the `serialport` package may compile native addons. Having `build-essential`/`python3`/`libudev-dev` installed ensures `npm install` succeeds.
+- If you use SoundModem or AGW for audio-based TNCs, run those services separately and configure `kiss-tcp`/`soundmodem` channels in `server/config.json` to point at the host/port.
+
+### Windows (developer-friendly steps)
+
+1. Install Node.js LTS from https://nodejs.org (recommended 18.x or 20.x LTS).
+
+2. Install `windows-build-tools` if `serialport` needs to compile (only required for older Node versions). For modern prebuilt `serialport` releases this may not be necessary.
+
+3. Clone the repository and install dependencies in PowerShell or an elevated prompt if you need device access:
+
+```powershell
+git clone <repo-url>
+cd NexDigi
+npm install
+cd client
+npm install
+```
+
+4. Configure `server/config.json` to include a `serial` or `kiss-tcp` channel as appropriate for your hardware. For testing, add a `mock` channel.
+
+5. Start the server and client (PowerShell):
+
+```powershell
+# server only
+npm run dev:server
+# or both (requires a separate shell for client)
+npm run dev
+```
+
+Windows notes:
+- Serial ports appear as `COM*` (e.g. COM3). Use that name in `server/config.json` for `serial` channels.
+- If you run into `serialport` install issues, check for prebuilt binaries for your Node version or install the required Windows build chain (Visual Studio Build Tools).
+
+### Testing without hardware
+
+- Add a `mock` channel in `server/config.json` to exercise the code paths without radio hardware. The mock adapter emits synthetic frames periodically.
+- Use the simulate endpoint `/api/digipeater/simulate-incoming-bulletin` to inject a test bulletin and verify that the WeatherAlertManager captures and repeats it (if enabled).
+
+### Running as a service (suggestion)
+
+- On Debian, create a `systemd` service that runs `node /path/to/NexDigi/server/index.js` under a user in the `dialout` group.
+- On Windows, use NSSM or a scheduled task to run the server at startup.
+
+If you'd like, I can add a sample `systemd` unit file and a short PowerShell script to install the service on Windows.
+
+### One-line install commands (service)
+
+If you already have the repo checked out on the target host, here are convenient one-line commands to install and enable the service using the files in `deploy/`.
+
+Debian (run from the repository root; requires sudo):
+
+```bash
+sudo useradd -r -s /bin/false nexdigi || true; sudo mkdir -p /opt/nexdigi && sudo cp -r . /opt/nexdigi && sudo usermod -a -G dialout nexdigi && sudo chown -R nexdigi:dialout /opt/nexdigi && sudo -u nexdigi bash -lc 'cd /opt/nexdigi && npm install --production' && sudo cp /opt/nexdigi/deploy/nexdigi.service /etc/systemd/system/nexdigi.service && sudo systemctl daemon-reload && sudo systemctl enable --now nexdigi.service
+```
+
+Windows (run in an elevated PowerShell prompt from the repo root; adjust Node path and install path as needed):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-windows-service.ps1 -InstallPath 'C:\opt\nexdigi' -NodeExe 'C:\Program Files\nodejs\node.exe'
+```
+
+Notes:
+- The Debian one-liner creates a `nexdigi` user (if not present), copies the repo to `/opt/nexdigi`, installs production dependencies, installs the systemd unit, and starts the service.
+- The Windows PowerShell script will attempt to use NSSM (if installed) for a robust service; otherwise it falls back to `sc.exe`. Run the command from an elevated prompt.
+- Always inspect and edit the service files (`deploy/nexdigi.service`, `deploy/install-windows-service.ps1`) to match your environment before running automated install commands.
+
+## Safe Debian install (step-by-step)
+
+If you prefer a safer approach than the one-liner, use the provided `deploy/install-debian.sh` which:
+
+- Verifies Node.js version (requires Node >= 18 by default)
+- Stops an existing `nexdigi` systemd service if present
+- Backs up any previous `/opt/nexdigi` to `/opt/nexdigi.bak.TIMESTAMP`
+- Copies files into `/opt/nexdigi` and installs production dependencies as the `nexdigi` user
+- Installs the systemd unit (`/etc/systemd/system/nexdigi.service`) and starts the service
+
+Recommended usage (run as root or with sudo):
+
+```bash
+# from repository root
+sudo bash deploy/install-debian.sh
+```
+
+Manual safe install steps (if you want to review each step):
+
+1. Verify Node version (>= 18):
+
+```bash
+node -v
+```
+
+2. Stop existing service (if present):
+
+```bash
+sudo systemctl stop nexdigi.service || true
+```
+
+3. Backup existing installation (if present):
+
+```bash
+sudo mv /opt/nexdigi /opt/nexdigi.bak.$(date -u +%Y%m%dT%H%M%SZ) || true
+```
+
+4. Copy new files to `/opt/nexdigi`:
+
+```bash
+sudo mkdir -p /opt/nexdigi
+sudo cp -r . /opt/nexdigi
+sudo chown -R nexdigi:dialout /opt/nexdigi
+```
+
+5. Install production dependencies as the nexdigi user:
+
+```bash
+sudo -u nexdigi bash -lc 'cd /opt/nexdigi && npm install --production'
+```
+
+6. Install and start systemd unit:
+
+```bash
+sudo cp /opt/nexdigi/deploy/nexdigi.service /etc/systemd/system/nexdigi.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now nexdigi.service
+```
+
+7. Tail logs to verify startup:
+
+```bash
+journalctl -u nexdigi -f
+```
+
+If you want me to tweak `deploy/install-debian.sh` (for example: change minimum Node version, add an env file, or preserve npm caches), tell me what behavior you prefer and I will update it.
+
+### Environment file and uninstall
+
+The systemd unit now supports an environment file at `/etc/default/nexdigi`. Create this file to set environment variables used by the service (example):
+
+```bash
+sudo tee /etc/default/nexdigi > /dev/null <<'EOF'
+# NexDigi runtime environment
+NODE_ENV=production
+PORT=3000
+EOF
+```
+
+The installer preserves an existing `/etc/default/nexdigi` by copying it into the install directory as `.etc-default-nexdigi.bak` so you can review and restore it.
+
+To safely uninstall and restore the last backup created by the installer, use:
+
+```bash
+sudo bash deploy/uninstall-debian.sh
+```
+

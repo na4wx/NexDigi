@@ -53,13 +53,22 @@ export default function ChannelsPage() {
     }
   }
 
-  function openNew() { setEditing(null); setForm({ id: '', name: '', type: 'mock', options: { callsign: '' }, enabled: true, mode: 'digipeat' }); setOpen(true) }
+  function openNew() { 
+    setEditing(null); 
+    setForm({ 
+      id: '', 
+      name: '', 
+      type: 'mock', 
+      options: {}, 
+      enabled: true 
+    }); 
+    setOpen(true) 
+  }
+  
   function openEdit(c) {
     const baseOpts = c.options || {};
-    // ensure defaults for host/port/callsign and serial settings so displayed defaults are persisted on save
+    // ensure defaults for host/port and serial settings so displayed defaults are persisted on save
     const opts = Object.assign({
-      igate: false,
-      callsign: '',
       host: '127.0.0.1',
       port: c.type === 'kiss-tcp' ? 8001 : (c.type === 'serial' ? '' : undefined),
       baud: c.type === 'serial' ? 9600 : undefined,
@@ -72,7 +81,13 @@ export default function ChannelsPage() {
       verbose: false
     }, baseOpts);
     setEditing(c.id);
-    setForm({ id: c.id, name: c.name, type: c.type || 'mock', options: opts, enabled: c.enabled !== false, mode: c.mode || (c.options && c.options.mode) || 'digipeat' });
+    setForm({ 
+      id: c.id, 
+      name: c.name, 
+      type: c.type || 'mock', 
+      options: opts, 
+      enabled: c.enabled !== false 
+    });
     setOpen(true);
   }
 
@@ -95,7 +110,7 @@ export default function ChannelsPage() {
       if (!Object.prototype.hasOwnProperty.call(opts, 'xoff')) opts.xoff = !!opts.xoff;
       if (!Object.prototype.hasOwnProperty.call(opts, 'verbose')) opts.verbose = !!opts.verbose;
     }
-  const payload = { id: form.id, name: form.name, type: form.type, enabled: form.enabled, options: opts, mode: form.mode };
+    const payload = { id: form.id, name: form.name, type: form.type, enabled: form.enabled, options: opts };
     if (editing) {
       await fetch(`${API_BASE}/api/channels/${editing}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) })
     } else {
@@ -137,11 +152,10 @@ export default function ChannelsPage() {
             <Box display="flex" fontWeight={600} mb={1} px={1} columnGap={2}>
               <Box width={280}>Name</Box>
               <Box width={180}>ID</Box>
-              <Box width={180}>Callsign</Box>
+              <Box width={120}>Type</Box>
               <Box width={220}>Status</Box>
-              <Box flex={1}>Targets</Box>
-              <Box width={120}>IGate</Box>
-              <Box width={120}>Mode</Box>
+              <Box flex={1}>Connection Info</Box>
+              <Box width={100}>Enabled</Box>
               <Box width={80}></Box>
             </Box>
             {channels.map((c) => (
@@ -150,8 +164,8 @@ export default function ChannelsPage() {
                 <Box width={180}>
                   <Typography variant="body2">{c.id}</Typography>
                 </Box>
-                <Box width={180}>
-                  <Typography variant="body2">{c.options && c.options.callsign ? c.options.callsign : '-'}</Typography>
+                <Box width={120}>
+                  <Typography variant="body2">{c.type || 'mock'}</Typography>
                 </Box>
                 <Box width={220}>
                   <Typography variant="body1" style={{ fontWeight: 600 }}>{c.status && c.status.connected ? 'connected' : 'closed'}</Typography>
@@ -163,19 +177,42 @@ export default function ChannelsPage() {
                   </Typography>
                 </Box>
                 <Box flex={1}>
-                  <Typography variant="body2">{(c.options && c.options.targets ? c.options.targets.join(', ') : '') || '-'}</Typography>
+                  <Typography variant="body2">
+                    {c.type === 'serial' && c.options && c.options.port ? 
+                      `${c.options.port} @ ${c.options.baud || 9600}` : 
+                      c.type === 'kiss-tcp' && c.options ? 
+                        `${c.options.host || '127.0.0.1'}:${c.options.port || 8001}` : 
+                        '-'}
+                  </Typography>
                 </Box>
-                <Box width={120}>
-                  <Switch checked={!!(c.options && c.options.igate)} onChange={async (e) => {
+                <Box width={100}>
+                  <Switch checked={c.enabled !== false} onChange={async (e) => {
                     const newVal = e.target.checked;
                     try {
-                      const payload = Object.assign({}, c, { options: Object.assign({}, c.options || {}, { igate: newVal }) });
-                      await fetch(`${API_BASE}/api/channels/${c.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+                      console.log('Channel toggle clicked:', { id: c.id, type: c.type, newVal, channel: c });
+                      const payload = { 
+                        id: c.id, 
+                        name: c.name, 
+                        type: c.type, 
+                        enabled: newVal, 
+                        options: c.options || {} 
+                      };
+                      console.log('Sending payload:', payload);
+                      const response = await fetch(`${API_BASE}/api/channels/${c.id}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) });
+                      console.log('Response status:', response.status);
+                      if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error('Server error:', errorText);
+                        alert('Server error: ' + errorText);
+                        return;
+                      }
                       fetchChannels();
-                    } catch (err) { alert('Failed to update channel IGate option: ' + err.message) }
+                    } catch (err) { 
+                      console.error('Toggle error:', err);
+                      alert('Failed to update channel enabled state: ' + err.message);
+                    }
                   }} />
                 </Box>
-                <Box width={120}>{c.mode || (c.options && c.options.mode) || 'digipeat'}</Box>
                 <Box width={80} display="flex" justifyContent="flex-end">
                   <IconButton size="small" onClick={(ev) => { setMenuAnchor(ev.currentTarget); setMenuChannel(c); }}>
                     <MoreVertIcon />
@@ -194,38 +231,6 @@ export default function ChannelsPage() {
             <TextField label="ID" value={form.id} onChange={(e) => setForm({ ...form, id: e.target.value })} disabled={!!editing} />
             <TextField label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
 
-            <TextField label="Callsign" value={(form.options && form.options.callsign) || ''} onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), callsign: e.target.value } })} helperText="Optional: callsign used for digipeat matching" />
-
-            <Box display="flex" alignItems="center" gap={2}>
-              <Box>
-                <Typography variant="caption">Append digi callsign into path</Typography>
-                <Switch checked={!!(form.options && form.options.appendDigiCallsign)} onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), appendDigiCallsign: e.target.checked } })} />
-              </Box>
-              <Box>
-                <Typography variant="caption">Forward to IGate</Typography>
-                <Switch checked={!!(form.options && form.options.igate)} onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), igate: e.target.checked } })} />
-              </Box>
-              <Box>
-                <Typography variant="caption">Emit ID on repeat</Typography>
-                <Switch checked={!!(form.options && form.options.idOnRepeat)} onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), idOnRepeat: e.target.checked } })} />
-              </Box>
-              <Box>
-                <TextField label="Periodic Beacon (min)" type="number" size="small" value={(form.options && form.options.periodicBeaconInterval) ? Math.round((form.options.periodicBeaconInterval||0)/60) : ''} onChange={(e) => {
-                  const v = Number(e.target.value || 0);
-                  setForm({ ...form, options: { ...(form.options||{}), periodicBeaconInterval: v > 0 ? v * 60 : 0 } });
-                }} helperText="0 = disabled" />
-                <TextField label="Beacon text" size="small" value={(form.options && form.options.periodicBeaconText) || ''} onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), periodicBeaconText: e.target.value } })} helperText="Text transmitted as periodic beacon" />
-              </Box>
-            </Box>
-
-            <FormControl>
-              <InputLabel id="mode-label">Mode</InputLabel>
-              <Select labelId="mode-label" value={form.mode || 'digipeat'} label="Mode" onChange={(e) => setForm({ ...form, mode: e.target.value })}>
-                <MenuItem value="digipeat">Digipeat</MenuItem>
-                <MenuItem value="none">None (receive only)</MenuItem>
-              </Select>
-            </FormControl>
-
             <FormControl>
               <InputLabel id="type-label">Type</InputLabel>
               <Select labelId="type-label" value={form.type} label="Type" onChange={(e) => setForm({ ...form, type: e.target.value })}>
@@ -239,6 +244,18 @@ export default function ChannelsPage() {
               <Typography>Enabled</Typography>
               <Switch checked={form.enabled !== false} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
             </Box>
+
+            {(form.type === 'serial' || form.type === 'kiss-tcp' || form.type === 'mock') && (
+              <>
+                <TextField 
+                  label="BBS Response Delay (ms)" 
+                  type="number" 
+                  value={form.options.bbsDelayMs || 0} 
+                  onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), bbsDelayMs: Number(e.target.value) } })} 
+                  helperText="Delay in milliseconds before BBS sends response frames (0 = no delay)"
+                />
+              </>
+            )}
 
             {form.type === 'serial' && (
               <>
@@ -294,22 +311,6 @@ export default function ChannelsPage() {
                 <TextField label="Port" type="number" value={form.options.port || 8001} onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), port: Number(e.target.value) } })} />
               </>
             )}
-            <FormControl>
-              <InputLabel id="targets-label">Digipeat Targets</InputLabel>
-              <Select
-                labelId="targets-label"
-                multiple
-                value={form.options.targets || []}
-                onChange={(e) => setForm({ ...form, options: { ...(form.options||{}), targets: e.target.value } })}
-                renderValue={(selected) => (selected || []).join(', ')}
-              >
-                {channels.filter(ch => ch.id !== form.id).map(ch => (
-                  <MenuItem key={ch.id} value={ch.id}>
-                    {ch.name} — {ch.id}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
           </Box>
         </DialogContent>
         <DialogActions>
@@ -332,7 +333,7 @@ export default function ChannelsPage() {
           <Button onClick={() => setBeaconOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={async () => {
             if (!beaconChannel) return;
-            const body = { channel: beaconChannel.id, dest: beaconForm.dest, source: (beaconChannel.options && beaconChannel.options.callsign) || beaconChannel.id, path: beaconForm.path, payload: beaconForm.payload };
+            const body = { channel: beaconChannel.id, dest: beaconForm.dest, source: beaconChannel.id, path: beaconForm.path, payload: beaconForm.payload };
             try {
               const res = await fetch(`${API_BASE}/api/beacon`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
               const j = await res.json();
