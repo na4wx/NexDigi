@@ -1,11 +1,11 @@
 {
   "name": "nexdigi",
-  "version": "0.1.0",
+  "version": "0.8.100225",
   "private": true,
   "scripts": {
     "start": "node ./server/index.js",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
-    "dev:server": "nodemon --watch server --exec node server/index.js",
+    "dev:server": "nodemon --watch server --ignore server/data --ignore 'server/data/**' --ignore '**/*.json' --ext js --exec node server/index.js",
     "dev:client": "cd client && npm run dev",
     "build:client": "cd client && npm run build",
     "test": "echo \"No tests yet\" && exit 0"

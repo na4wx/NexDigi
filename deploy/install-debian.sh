@@ -17,9 +17,38 @@ NODE_MIN_MAJOR=18
 print() { echo "[nexdigi-installer] $*"; }
 err() { echo "[nexdigi-installer][ERROR] $*" >&2; exit 1; }
 
+PROVISION=true
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-provision) PROVISION=false; shift;;
+    *) shift;;
+  esac
+done
+
 # Check for root
 if [[ $EUID -ne 0 ]]; then
   err "This script must be run as root (use sudo)"
+fi
+
+# Optionally provision system packages and Node.js
+if $PROVISION; then
+  print "Provisioning system packages and Node.js (this requires network access)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y --no-install-recommends build-essential python3 pkg-config curl git ca-certificates libudev-dev
+  # Install Node.js (NodeSource) if node not present or version too old
+  NEED_NODE=false
+  if ! command -v node >/dev/null 2>&1; then NEED_NODE=true; fi
+  if ! $NEED_NODE; then
+    NODE_VER_CHECK=$(node -v | sed 's/v//')
+    NODE_MAJOR_CHECK=$(echo "$NODE_VER_CHECK" | cut -d. -f1)
+    if (( NODE_MAJOR_CHECK < NODE_MIN_MAJOR )); then NEED_NODE=true; fi
+  fi
+  if $NEED_NODE; then
+    print "Installing Node.js via NodeSource (Node ${NODE_MIN_MAJOR}+):"
+    curl -fsSL https://deb.nodesource.com/setup_${NODE_MIN_MAJOR}.x | bash -
+    apt-get install -y nodejs
+  fi
 fi
 
 # Check Node

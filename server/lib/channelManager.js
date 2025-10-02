@@ -291,11 +291,39 @@ class ChannelManager extends EventEmitter {
         return;
       }
 
-      // If this receiving channel is not configured as a digipeater, do not attempt to service
-      // path entries or forward frames.
+      // If this receiving channel is not configured as a digipeater, we normally don't
+      // attempt to service path entries. However, if the operator has explicitly
+      // configured routes from this channel to other targets (e.g., cross-channel
+      // forwarding from a receive-only radio to a digipeater channel), we should
+      // still forward the raw frame to those targets. This preserves the previous
+      // behavior for digipeaters while enabling manual route forwarding.
       const recvCh = this.channels.get(channelId);
-      if (!recvCh || (recvCh.mode && recvCh.mode !== 'digipeat')) {
-        return; // just emit frame event and return (we already emitted above)
+      const routeTargetsConfigured = this.routes.get(channelId) ? Array.from(this.routes.get(channelId)) : [];
+      // If channel is not present, nothing to do
+      if (!recvCh) return;
+      // If channel is not configured as digipeat but has explicit routes, forward raw frames
+      if (recvCh.mode && recvCh.mode !== 'digipeat' && routeTargetsConfigured.length > 0) {
+        // Use seen-cache to avoid loops / duplicate sends
+        const keyRaw = frame.toString('hex');
+        const nowRaw = Date.now();
+        const entryRaw = this.seen.get(keyRaw) || { ts: nowRaw, seen: new Set() };
+        if (nowRaw - entryRaw.ts > this.SEEN_TTL) { entryRaw.ts = nowRaw; entryRaw.seen = new Set(); }
+        for (const targetId of routeTargetsConfigured) {
+          if (entryRaw.seen.has(targetId)) continue;
+          const target = this.channels.get(targetId);
+          if (!target || !target.enabled) continue;
+          // Prevent sending back to origin unless explicitly routed
+          if (!this.allowSelfDigipeat && targetId === channelId) continue;
+          try {
+            this.sendFrame(targetId, frame);
+            this.emit('digipeat', { from: channelId, to: targetId, raw: frame.toString('hex'), serviced: null, note: 'forward-raw' });
+            entryRaw.seen.add(targetId);
+          } catch (e) {
+            this.emit('digipeat-error', { from: channelId, to: targetId, err: e });
+          }
+        }
+        this.seen.set(keyRaw, entryRaw);
+        return;
       }
 
       const addresses = parsed.addresses || [];

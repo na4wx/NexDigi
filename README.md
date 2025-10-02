@@ -323,3 +323,16 @@ To safely uninstall and restore the last backup created by the installer, use:
 sudo bash deploy/uninstall-debian.sh
 ```
 
+Provisioning mode
+
+The installer supports an automatic provisioning mode (default) that installs required system packages and Node.js via apt/NodeSource. If you prefer to provision the host yourself (for example, in a locked-down environment or to use a specific Node install method), run the installer with `--no-provision`:
+
+```bash
+sudo bash deploy/install-debian.sh --no-provision
+```
+
+When provisioning is enabled the installer will:
+- apt-get update && apt-get install build-essential python3 pkg-config curl git ca-certificates libudev-dev
+- install Node.js ${NODE_MIN_MAJOR}+ via NodeSource if the host lacks a suitable Node.js version
+
+
