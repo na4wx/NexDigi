@@ -130,7 +130,7 @@ NexDigi supports automated installation on Debian/Ubuntu Linux and Windows. The 
 **Automated install** (installs all dependencies and sets up service):
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/na4wx/NexDigi.git
 cd NexDigi
 sudo bash deploy/install-debian.sh
 ```
@@ -164,7 +164,7 @@ systemctl status nexdigi
 
 ```powershell
 # Clone repository first
-git clone <repo-url>
+git clone https://github.com/na4wx/NexDigi.git
 cd NexDigi
 
 # Install Node.js dependencies
@@ -212,7 +212,7 @@ For development (without service installation):
 
 **Linux/macOS:**
 ```bash
-git clone <repo-url>
+git clone https://github.com/na4wx/NexDigi.git
 cd NexDigi
 npm install
 cd client && npm install && cd ..
@@ -221,7 +221,7 @@ npm run dev
 
 **Windows:**
 ```powershell
-git clone <repo-url>
+git clone https://github.com/na4wx/NexDigi.git
 cd NexDigi
 npm install
 cd client; npm install; cd ..
