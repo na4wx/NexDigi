@@ -31,7 +31,9 @@ class ChannelManager extends EventEmitter {
     // metrics for observability
     this.metrics = {
       servicedWideBlocked: 0,
-      maxWideBlocked: 0
+      maxWideBlocked: 0,
+      digipeats: 0,
+      uniqueStations: 0
     };
     this.crossDigipeat = false; // when true, digipeat to all enabled channels (subject to seen-cache)
     this.allowSelfDigipeat = true; // allow repeating back out the same channel (typical digipeater behavior)
@@ -97,6 +99,8 @@ class ChannelManager extends EventEmitter {
         if (now - v.ts > this.SEEN_TTL) toDelete.push(k);
       }
       for (const k of toDelete) this.seen.delete(k);
+      // update uniqueStations metric to current seen size as approximation
+      try { this.metrics.uniqueStations = this.seen.size; } catch (e) {}
       // enforce max entries after cleanup
       this._evictSeenIfNeeded();
     } catch (e) { /* best-effort cleanup */ }
@@ -362,6 +366,7 @@ class ChannelManager extends EventEmitter {
           try {
             this.sendFrame(targetId, frame);
             this.emit('digipeat', { from: channelId, to: targetId, raw: frame.toString('hex'), serviced: null, note: 'forward-raw' });
+            try { this.metrics.digipeats = (this.metrics.digipeats || 0) + 1; } catch (e) {}
             entryRaw.seen.add(targetId);
           } catch (e) {
             this.emit('digipeat-error', { from: channelId, to: targetId, err: e });
@@ -587,6 +592,7 @@ class ChannelManager extends EventEmitter {
           // sending serviced frame logging suppressed
           this.sendFrame(targetId, servicedBuf);
           this.emit('digipeat', { from: channelId, to: targetId, raw: frame.toString('hex'), serviced: toMark });
+          try { this.metrics.digipeats = (this.metrics.digipeats || 0) + 1; } catch (e) {}
           try { /* digipeat forwarded logging suppressed */ } catch (e) {}
           // record that target has seen this frame to prevent immediate reprocessing
           entry.seen.add(targetId);
@@ -594,6 +600,7 @@ class ChannelManager extends EventEmitter {
           if (targetId === channelId) entry.seen.add(channelId);
           // (servicedWide is already set earlier for WIDE entries)
           this.seen.set(key, entry);
+          try { this.metrics.uniqueStations = this.seen.size; } catch (e) {}
           // optionally emit an immediate ID beacon for this target channel
           if (target.idOnRepeat) {
             try { this._sendIdBeaconForChannel(targetId); } catch (e) { /* ignore */ }

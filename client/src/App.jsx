@@ -1,7 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Box, Container, Typography, List, ListItem, ListItemText, Paper, Button, AppBar, Toolbar, Chip, IconButton } from '@mui/material'
+import { Box, Container, Typography, List, ListItem, ListItemText, Paper, Button, AppBar, Toolbar, Chip, IconButton, Grid, Card, CardContent } from '@mui/material'
 import AutorenewIcon from '@mui/icons-material/Autorenew'
 import BugReportIcon from '@mui/icons-material/BugReport'
+import RefreshIcon from '@mui/icons-material/Refresh'
+import StorageIcon from '@mui/icons-material/Storage'
+import VisibilityIcon from '@mui/icons-material/Visibility'
+import RepeatIcon from '@mui/icons-material/Repeat'
+import GroupIcon from '@mui/icons-material/Group'
 import SettingsPage from './pages/Settings'
 import ActiveAlerts from './pages/ActiveAlerts'
 import LastHeard from './pages/LastHeard'
@@ -114,9 +119,22 @@ export default function App() {
   const [showHex, setShowHex] = useState(false)
 
   const [channels, setChannels] = useState([])
+  const [stats, setStats] = useState(null)
+  const [statsLoading, setStatsLoading] = useState(false)
   const backend = `http://${location.hostname}:3000`
   const fetchChannels = () => fetch(`${backend}/api/channels`).then(r => r.json()).then(j => setChannels(j)).catch(() => setChannels([]))
   useEffect(() => { fetchChannels() }, [])
+
+  const fetchStats = async () => {
+    setStatsLoading(true)
+    try {
+      const resp = await fetch(`${backend}/api/digipeater/metrics`)
+      const j = await resp.json()
+      setStats(j)
+    } catch (e) { setStats(null) }
+    setStatsLoading(false)
+  }
+  useEffect(() => { fetchStats() }, [])
 
   const doReconnect = async (id) => {
     try {
@@ -205,6 +223,89 @@ export default function App() {
                     ))}
                   </List>
                 </Paper>
+              </Box>
+
+              <Box marginTop={2}>
+                <Box display="flex" alignItems="center" justifyContent="space-between" marginBottom={1}>
+                  <Typography variant="h6">Stats</Typography>
+                  <Button size="small" onClick={fetchStats} disabled={statsLoading} startIcon={<RefreshIcon />}>Refresh</Button>
+                </Box>
+
+                {stats ? (
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card>
+                        <CardContent>
+                          <Box display="flex" alignItems="center" gap={2}>
+                            <StorageIcon fontSize="large" color="primary" />
+                            <Box>
+                              <Typography variant="subtitle2" color="textSecondary">Channels</Typography>
+                              <Typography variant="h6">{`${stats.channels ? stats.channels.online : '—'} / ${stats.channels ? stats.channels.total : '—'}`}</Typography>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card>
+                        <CardContent>
+                          <Box display="flex" alignItems="center" gap={2}>
+                            <VisibilityIcon fontSize="large" color="primary" />
+                            <Box>
+                              <Typography variant="subtitle2" color="textSecondary">Seen cache</Typography>
+                              <Typography variant="h6">{stats.seen ? stats.seen.size : '—'}</Typography>
+                              <Typography variant="caption" color="textSecondary">TTL: {stats.seen ? stats.seen.ttl : '—'} ms · Max: {stats.seen ? stats.seen.maxEntries : '—'}</Typography>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card>
+                        <CardContent>
+                          <Box display="flex" alignItems="center" gap={2}>
+                            <RepeatIcon fontSize="large" color="primary" />
+                            <Box>
+                              <Typography variant="subtitle2" color="textSecondary">Digipeats</Typography>
+                              <Typography variant="h6">{stats.metrics && typeof stats.metrics.digipeats !== 'undefined' ? stats.metrics.digipeats : '—'}</Typography>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+
+                    <Grid item xs={12} sm={6} md={3}>
+                      <Card>
+                        <CardContent>
+                          <Box display="flex" alignItems="center" gap={2}>
+                            <GroupIcon fontSize="large" color="primary" />
+                            <Box>
+                              <Typography variant="subtitle2" color="textSecondary">Unique stations</Typography>
+                              <Typography variant="h6">{stats.metrics && typeof stats.metrics.uniqueStations !== 'undefined' ? stats.metrics.uniqueStations : (stats.seen ? stats.seen.size : '—')}</Typography>
+                            </Box>
+                          </Box>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+
+                    {stats.metrics && Object.keys(stats.metrics).filter(k => !['digipeats','uniqueStations'].includes(k)).map(k => (
+                      <Grid item xs={12} sm={6} md={3} key={k}>
+                        <Card>
+                          <CardContent>
+                            <Typography variant="subtitle2" color="textSecondary">{k}</Typography>
+                            <Typography variant="h6">{stats.metrics[k]}</Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                    ))}
+                  </Grid>
+                ) : (
+                  <Paper style={{ padding: 12 }}>
+                    <Typography variant="body2">{statsLoading ? 'Loading...' : 'No stats available'}</Typography>
+                  </Paper>
+                )}
               </Box>
             </Box>
           )}
