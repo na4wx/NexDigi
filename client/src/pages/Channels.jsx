@@ -4,7 +4,7 @@ import DeleteIcon from '@mui/icons-material/Delete'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
 
-export default function ChannelsPage() {
+export default function ChannelsPage({ setGlobalMessage, children }) {
   const API_BASE = `${location.protocol}//${location.hostname}:3000`
   const [channels, setChannels] = useState([])
   const [ports, setPorts] = useState([])
@@ -123,8 +123,10 @@ export default function ChannelsPage() {
       if (confirm('Reconnect channel now to apply new settings? This may briefly close/open the port.')) {
         try {
           await fetch(`${API_BASE}/api/channels/${payload.id}/reconnect`, { method: 'POST' });
-          alert('Reconnect requested');
-        } catch (e) { alert('Reconnect failed: ' + e.message) }
+          if (typeof setGlobalMessage === 'function') setGlobalMessage('Reconnect requested'); else alert('Reconnect requested');
+        } catch (e) {
+          if (typeof setGlobalMessage === 'function') setGlobalMessage('Reconnect failed: ' + e.message); else alert('Reconnect failed: ' + e.message);
+        }
       }
     }
   }
@@ -186,7 +188,7 @@ export default function ChannelsPage() {
                   </Typography>
                 </Box>
                 <Box width={100}>
-                  <Switch checked={c.enabled !== false} onChange={async (e) => {
+                      <Switch checked={c.enabled !== false} onChange={async (e) => {
                     const newVal = e.target.checked;
                     try {
                       console.log('Channel toggle clicked:', { id: c.id, type: c.type, newVal, channel: c });
@@ -211,7 +213,7 @@ export default function ChannelsPage() {
                       console.error('Toggle error:', err);
                       alert('Failed to update channel enabled state: ' + err.message);
                     }
-                  }} />
+                      }} />
                 </Box>
                 <Box width={80} display="flex" justifyContent="flex-end">
                   <IconButton size="small" onClick={(ev) => { setMenuAnchor(ev.currentTarget); setMenuChannel(c); }}>

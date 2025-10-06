@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { writeJsonAtomicSync } = require('./fileHelpers');
 // load SAME codes mapping lazily
 let SAME_MAP = null;
 function loadSameMap() {
@@ -22,6 +23,18 @@ function loadSameMap() {
     SAME_MAP = map;
     return SAME_MAP;
   } catch (e) { SAME_MAP = {}; return SAME_MAP; }
+}
+
+// Helper to determine if a structured alert is expired.
+function isAlertExpired(alert) {
+  try {
+    if (!alert) return false;
+    const exp = alert.expires || (alert.alert && alert.alert.expires) || null;
+    if (!exp) return false;
+    const dt = new Date(exp);
+    if (isNaN(dt.getTime())) return false; // unparseable -> keep
+    return dt.getTime() < Date.now();
+  } catch (e) { return false; }
 }
 
 // helper to create compact event abbreviation
@@ -115,6 +128,8 @@ class WeatherAlertManager {
     // persisted sent alerts: eventId -> { hash, lastSent }
     this.persistPath = path.join(__dirname, '..', 'data', 'activeAlerts.json');
     this.sent = new Map();
+    // expiry timers: eventId -> timeoutId
+    this._expiryTimers = new Map();
     this._loadPersisted();
     // track bound listener so we can add/remove it
     this._boundFrameListener = null;
@@ -132,7 +147,22 @@ class WeatherAlertManager {
             const v = obj[k] || {};
             // Expect persisted shape: { hash, lastSent, alert }
             const alert = v.alert || {};
+            // Skip expired alerts on load to keep persisted file clean
+            if (isAlertExpired(alert)) {
+              // do not load expired entries
+              return;
+            }
             this.sent.set(k, { hash: v.hash, lastSent: v.lastSent || 0, alert });
+            // schedule automatic removal at expiry if applicable
+            try {
+              const exp = alert && (alert.expires || alert.alerts && alert.alerts.expires) ? (alert.expires || (alert.alerts && alert.alerts.expires)) : null;
+              if (exp) {
+                const dt = new Date(exp);
+                if (!isNaN(dt.getTime()) && dt.getTime() > Date.now()) {
+                  this._scheduleExpiry(k, dt.getTime());
+                }
+              }
+            } catch (e) {}
           } catch (e) {}
         });
       }
@@ -143,14 +173,56 @@ class WeatherAlertManager {
 
   _persist() {
     try {
+      // Remove expired alerts from the in-memory map and persist only active ones
       const out = {};
-      for (const [k, v] of this.sent.entries()) {
-        out[k] = { hash: v.hash, lastSent: v.lastSent, alert: v.alert || null };
+      for (const [k, v] of Array.from(this.sent.entries())) {
+        try {
+          const alertObj = v && v.alert ? v.alert : (v || {}).alert || v;
+          if (isAlertExpired(alertObj)) {
+            // remove expired from in-memory map
+            try { this.sent.delete(k); } catch (e) {}
+            continue;
+          }
+          out[k] = { hash: v.hash, lastSent: v.lastSent, alert: v.alert || null };
+        } catch (e) { /* ignore per-entry issues */ }
       }
-      fs.writeFileSync(this.persistPath, JSON.stringify(out, null, 2));
+      writeJsonAtomicSync(this.persistPath, out);
     } catch (e) {
       console.error('WeatherAlertManager: failed to persist alerts', e);
     }
+  }
+
+  _cancelExpiry(eventId) {
+    try {
+      const t = this._expiryTimers.get(eventId);
+      if (t) {
+        try { clearTimeout(t); } catch (e) {}
+        this._expiryTimers.delete(eventId);
+      }
+    } catch (e) {}
+  }
+
+  _scheduleExpiry(eventId, epochMs) {
+    try {
+      this._cancelExpiry(eventId);
+      const now = Date.now();
+      const delay = Math.max(0, epochMs - now);
+      if (delay <= 0) {
+        // already expired - remove immediately
+        try { this.sent.delete(eventId); } catch (e) {}
+        try { this._persist(); } catch (e) {}
+        return;
+      }
+      const to = setTimeout(() => {
+        try {
+          this.sent.delete(eventId);
+          this._expiryTimers.delete(eventId);
+          this._persist();
+        } catch (e) {}
+      }, delay);
+      // store timer id so it can be cancelled if alert updated/cleared
+      this._expiryTimers.set(eventId, to);
+    } catch (e) {}
   }
 
   _hashProps(p) {
@@ -300,6 +372,10 @@ class WeatherAlertManager {
       // Persist synthetic external bulletin so we don't re-capture it repeatedly
       const ahash = this._hashProps({ payload, codes: rawCodes });
       this.sent.set(syntheticId, { hash: ahash, lastSent: Math.floor(now), alert: structured });
+      try {
+        const expMs = structured && structured.expires ? (new Date(structured.expires)).getTime() : null;
+        if (expMs && !isNaN(expMs) && expMs > Date.now()) this._scheduleExpiry(syntheticId, expMs);
+      } catch (e) {}
       this._persist();
     } catch (e) {
       // ignore parse errors
@@ -504,6 +580,10 @@ class WeatherAlertManager {
         }
         // record that we've sent this event: persist hash & structured alert
         this.sent.set(eventId, { hash: ahash, lastSent: Math.floor(now), alert: structured });
+        try {
+          const expMs = structured && structured.expires ? (new Date(structured.expires)).getTime() : null;
+          if (expMs && !isNaN(expMs) && expMs > Date.now()) this._scheduleExpiry(eventId, expMs);
+        } catch (e) {}
         this._persist();
         this.recent.set(eventId, Math.floor(now));
       }

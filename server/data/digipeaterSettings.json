@@ -3,12 +3,16 @@
   "channels": {
     "radio1": {
       "callsign": "NA4WX-9",
-      "mode": "disabled"
+      "mode": "digipeat",
+      "role": "wide",
+      "maxWideN": 2
     },
     "radio2": {
-      "mode": "digipeat",
+      "mode": "disabled",
       "callsign": "na4wx-5",
-      "appendCallsign": true
+      "appendCallsign": true,
+      "role": "wide",
+      "maxWideN": 2
     }
   },
   "routes": [
@@ -18,7 +22,7 @@
     },
     {
       "from": "radio1",
-      "to": "radio2"
+      "to": "radio1"
     }
   ],
   "nwsAlerts": {

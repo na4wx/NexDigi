@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomicSync } = require('./fileHelpers');
 const { parseAx25Frame, buildAx25Frame } = require('./ax25');
 
 class BBSSessionManager {
@@ -44,7 +45,7 @@ class BBSSessionManager {
   }
 
   saveUsers() {
-    try { fs.writeFileSync(this.storagePath, JSON.stringify(this.users, null, 2)); } catch (e) { console.error('Failed to save bbsUsers:', e); }
+    try { writeJsonAtomicSync(this.storagePath, this.users); } catch (e) { console.error('Failed to save bbsUsers:', e); }
   }
 
   getUser(call) {
