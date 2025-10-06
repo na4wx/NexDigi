@@ -253,6 +253,11 @@ module.exports = (dependencies) => {
           ttl: manager.SEEN_TTL,
           maxEntries: manager.MAX_SEEN_ENTRIES
         };
+        try {
+          out.channels = { total: manager.channels ? manager.channels.size : 0, online: Array.from(manager.channels.values()).filter(c => c && c.status && c.status.connected).length };
+        } catch (e) { out.channels = { total: 0, online: 0 }; }
+        try { out.metrics.digipeats = manager.metrics ? (manager.metrics.digipeats || 0) : (out.metrics.digipeats || 0); } catch (e) {}
+        try { out.metrics.uniqueStations = manager.metrics ? (manager.metrics.uniqueStations || manager.seen.size || 0) : (out.metrics.uniqueStations || 0); } catch (e) {}
       }
       res.json(out);
     } catch (e) {
