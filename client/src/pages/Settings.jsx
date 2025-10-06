@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Box, Tabs, Tab, TextField } from '@mui/material'
+import { Box, Tabs, Tab, TextField, Alert } from '@mui/material'
 import ChannelsPage from './Channels'
 import IGatePage from './IGate'
 // Temporarily hide BBS Settings tab for upcoming release
@@ -9,6 +9,7 @@ import DigipeaterSettings from './DigipeaterSettings'
 export default function SettingsPage() {
   const [tab, setTab] = useState(0)
   const [channel, setChannel] = useState({ mode: 'None' })
+  const [globalMessage, setGlobalMessage] = useState('')
   const modes = ['None', 'Digipeat', 'Packet', 'Digipeat + Packet']
 
   const handleModeChange = (newMode) => {
@@ -17,7 +18,15 @@ export default function SettingsPage() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+      {globalMessage && (
+        <Box sx={{ mb: 1, position: 'sticky', top: 64, zIndex: 1400 }}>
+          <Alert severity={globalMessage.includes('Error') ? 'error' : 'success'} sx={{ position: 'relative' }}>
+            {globalMessage}
+          </Alert>
+        </Box>
+      )}
+
+      <Box sx={{ position: 'sticky', top: 64, zIndex: 1200, backgroundColor: 'background.paper', borderBottom: '1px solid rgba(0,0,0,0.08)' }} display="flex" justifyContent="space-between" alignItems="center" mb={2}>
         <Tabs value={tab} onChange={(e, v) => setTab(v)}>
           <Tab label="Channels" />
           <Tab label="Digipeater" />
@@ -29,7 +38,7 @@ export default function SettingsPage() {
 
       <Box>
         {tab === 0 && (
-          <ChannelsPage>
+          <ChannelsPage setGlobalMessage={setGlobalMessage}>
             <TextField
               select
               label="Mode"
@@ -46,8 +55,8 @@ export default function SettingsPage() {
             </TextField>
           </ChannelsPage>
         )}
-        {tab === 1 && <DigipeaterSettings />}
-        {tab === 2 && <IGatePage />}
+  {tab === 1 && <DigipeaterSettings setGlobalMessage={setGlobalMessage} />}
+    {tab === 2 && <IGatePage setGlobalMessage={setGlobalMessage} />}
   {/* BBS Settings content temporarily hidden for future release */}
   {/* {tab === 3 && <BBSSettings />} */}
       </Box>

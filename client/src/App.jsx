@@ -4,6 +4,7 @@ import AutorenewIcon from '@mui/icons-material/Autorenew'
 import BugReportIcon from '@mui/icons-material/BugReport'
 import SettingsPage from './pages/Settings'
 import ActiveAlerts from './pages/ActiveAlerts'
+import LastHeard from './pages/LastHeard'
 // Temporarily comment out BBS UI for upcoming release
 // import BBS from './pages/BBS'
 // import BBSSettings from './pages/BBSSettings'
@@ -165,11 +166,12 @@ export default function App() {
     >
       {/* Main content */}
       <Box sx={{ flex: 1 }}>
-        <AppBar position="static">
+  <AppBar position="sticky" sx={{ top: 0, zIndex: (theme) => theme.zIndex.appBar }}>
           <Toolbar>
             <Typography variant="h6" sx={{ flexGrow: 1 }}>NexDigi</Typography>
             <Button color="inherit" onClick={() => setPage('home')}>Home</Button>
             <Button color="inherit" onClick={() => setPage('frames')}>Frames</Button>
+            <Button color="inherit" onClick={() => setPage('lastheard')}>Last Heard</Button>
             {/* BBS navigation temporarily disabled for future release */}
             {/* {bbsEnabled && <Button color="inherit" onClick={() => setPage('bbs')}>BBS</Button>} */}
             {alertsEnabled && <Button color="inherit" onClick={() => setPage('alerts')}>Alerts</Button>}
@@ -251,6 +253,8 @@ export default function App() {
               </Paper>
             </Box>
           )}
+
+          {page === 'lastheard' && <LastHeard />}
 
           {page === 'settings' && <SettingsPage />}
           {page === 'alerts' && <ActiveAlerts />}

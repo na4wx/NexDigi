@@ -28,9 +28,19 @@ class ChannelManager extends EventEmitter {
     this.seen = new Map();
     this.SEEN_TTL = 5 * 1000; // 5s for easier testing
     this.MAX_SEEN_ENTRIES = 1000; // eviction threshold
+    // metrics for observability
+    this.metrics = {
+      servicedWideBlocked: 0,
+      maxWideBlocked: 0
+    };
     this.crossDigipeat = false; // when true, digipeat to all enabled channels (subject to seen-cache)
     this.allowSelfDigipeat = true; // allow repeating back out the same channel (typical digipeater behavior)
   }
+
+  // Runtime setters for seen cache tuning
+  setSeenTTL(ms) { if (Number.isFinite(Number(ms)) && ms > 0) this.SEEN_TTL = Number(ms); }
+  setMaxSeenEntries(n) { if (Number.isFinite(Number(n)) && n > 0) this.MAX_SEEN_ENTRIES = Number(n); }
+  getMetrics() { return Object.assign({}, this.metrics); }
 
   setCrossDigipeat(v) { this.crossDigipeat = !!v; }
 
@@ -39,6 +49,26 @@ class ChannelManager extends EventEmitter {
     try {
       const parsed = require('./ax25').parseAx25Frame(frame);
       const addrStr = (parsed.addresses || []).map(a => `${a.callsign}:${a.ssid}`).join('|');
+      const payloadHex = (parsed.payload || Buffer.alloc(0)).toString('hex');
+      return `${addrStr}|${payloadHex}`;
+    } catch (e) {
+      return frame.toString('hex');
+    }
+  }
+
+  // Create a seen-cache key that normalizes WIDE-style path entries so that
+  // 'WIDE2-2' and 'WIDE2-1' are considered the same logical frame for loop
+  // prevention. Other callsigns keep their SSID information.
+  _seenKey(frame) {
+    try {
+      const parsed = require('./ax25').parseAx25Frame(frame);
+      const addrStr = (parsed.addresses || []).map(a => {
+        const base = _callsignBase(a.callsign);
+        if (/^WIDE/i.test(base)) {
+          return base; // collapse numeric suffix for WIDE entries
+        }
+        return `${a.callsign}:${a.ssid}`;
+      }).join('|');
       const payloadHex = (parsed.payload || Buffer.alloc(0)).toString('hex');
       return `${addrStr}|${payloadHex}`;
     } catch (e) {
@@ -55,6 +85,21 @@ class ChannelManager extends EventEmitter {
       if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
     }
     if (oldestKey) this.seen.delete(oldestKey);
+  }
+
+  // Cleanup seen-cache by removing entries older than SEEN_TTL and ensuring size limits.
+  cleanupSeen() {
+    try {
+      const now = Date.now();
+      const toDelete = [];
+      for (const [k, v] of this.seen.entries()) {
+        if (!v || typeof v.ts !== 'number') { toDelete.push(k); continue; }
+        if (now - v.ts > this.SEEN_TTL) toDelete.push(k);
+      }
+      for (const k of toDelete) this.seen.delete(k);
+      // enforce max entries after cleanup
+      this._evictSeenIfNeeded();
+    } catch (e) { /* best-effort cleanup */ }
   }
 
   addChannel({ id, name, adapter }) {
@@ -304,10 +349,10 @@ class ChannelManager extends EventEmitter {
       // If channel is not configured as digipeat but has explicit routes, forward raw frames
       if (recvCh.mode && recvCh.mode !== 'digipeat' && routeTargetsConfigured.length > 0) {
         // Use seen-cache to avoid loops / duplicate sends
-        const keyRaw = frame.toString('hex');
-        const nowRaw = Date.now();
-        const entryRaw = this.seen.get(keyRaw) || { ts: nowRaw, seen: new Set() };
-        if (nowRaw - entryRaw.ts > this.SEEN_TTL) { entryRaw.ts = nowRaw; entryRaw.seen = new Set(); }
+  const keyRaw = this._seenKey(frame);
+  const nowRaw = Date.now();
+  const entryRaw = this.seen.get(keyRaw) || { ts: nowRaw, seen: new Set() };
+  if (nowRaw - entryRaw.ts > this.SEEN_TTL) { entryRaw.ts = nowRaw; entryRaw.seen = new Set(); }
         for (const targetId of routeTargetsConfigured) {
           if (entryRaw.seen.has(targetId)) continue;
           const target = this.channels.get(targetId);
@@ -337,13 +382,16 @@ class ChannelManager extends EventEmitter {
       } catch (e) {}
 
       // seen-cache housekeeping
-      const key = frame.toString('hex');
+  const key = this._seenKey(frame);
       const now = Date.now();
-      const entry = this.seen.get(key) || { ts: now, seen: new Set() };
-      // remove old entries if stale
+      // preserve any existing servicedWide flag when reusing an entry
+      const existingEntry = this.seen.get(key);
+      const entry = existingEntry || { ts: now, seen: new Set(), servicedWide: false };
+      // remove old entries if stale (reset seen and servicedWide)
       if (now - entry.ts > this.SEEN_TTL) {
         entry.ts = now;
         entry.seen = new Set();
+        entry.servicedWide = false;
       }
       // If self-digipeat is disabled, mark source channel as having seen this frame
       // immediately to prevent sending back to origin. If self-digipeat is allowed,
@@ -405,15 +453,35 @@ class ChannelManager extends EventEmitter {
 
         // A digipeater should service frames if:
         // 1. Path contains its own callsign (unmarked), OR
-        // 2. Path contains WIDE entries with remaining hops (any digipeater can service these)
+        // 2. Path contains WIDE entries with remaining hops (subject to channel role and maxWideN)
         const callsignMatch = pathAddrs.findIndex(p => p.callsign && p.callsign.toUpperCase() === targetCall.toUpperCase() && !p.marked);
-        const wideMatch = pathAddrs.findIndex(p => p.callsign && /^WIDE/i.test(p.callsign) && (typeof p.ssid === 'number' ? p.ssid > 0 : true));
+        // Apply role rules: fill-in services only WIDE1-N; wide services WIDE2-N and above
+        const tgtRole = (target.role || '').toLowerCase();
+        const maxWideN = Number.isFinite(target.maxWideN) ? target.maxWideN : 2;
+        const isFillInOk = (p) => /^WIDE1/i.test(p.callsign || '') && (typeof p.ssid === 'number' ? p.ssid > 0 : true);
+        const isWideOk   = (p) => /^WIDE(\d+)/i.test(p.callsign || '') && (function(){ const m=(p.callsign||'').match(/^WIDE(\d+)/i); const tier = m? Number(m[1]||'0'):0; return tier>=2; })() && (typeof p.ssid === 'number' ? p.ssid > 0 : true);
+        // find first matching by role
+        let wideIdx = -1;
+        for (let i = 0; i < pathAddrs.length; i++) {
+          const p = pathAddrs[i];
+          if (!p || !/^WIDE/i.test(p.callsign || '')) continue;
+          // enforce maxWideN: if ssid (n) exceeds allowed, skip
+          const n = (typeof p.ssid === 'number') ? p.ssid : null;
+          if (n !== null && n > maxWideN) {
+            // record that we skipped servicing this WIDE entry because it exceeded maxWideN for this target
+            try { this.metrics.maxWideBlocked = (this.metrics.maxWideBlocked || 0) + 1; } catch (e) {}
+            try { console.debug && console.debug(`[digipeat] skipping ${p.callsign} for target=${targetId} (ssid ${n} > maxWideN ${maxWideN})`); } catch (e) {}
+            continue;
+          }
+          if (tgtRole === 'fill-in') { if (isFillInOk(p)) { wideIdx = i; break; } }
+          else { if (isWideOk(p)) { wideIdx = i; break; } }
+        }
 
         let toMark = null;
         if (callsignMatch !== -1) {
           toMark = pathAddrs[callsignMatch].callsign;
-        } else if (wideMatch !== -1) {
-          toMark = pathAddrs[wideMatch].callsign;
+        } else if (wideIdx !== -1) {
+          toMark = pathAddrs[wideIdx].callsign;
         }
 
         if (!toMark) {
@@ -425,6 +493,22 @@ class ChannelManager extends EventEmitter {
           return;
         }
         
+        // If the matched entry is a WIDE-style path and we've already serviced a WIDE
+        // variation of this frame, skip servicing it again to avoid multi-hop duplication.
+        try {
+          const baseToMark = _callsignBase(toMark || '');
+          if (/^WIDE/i.test(baseToMark)) {
+            // If another target has already claimed this frame's WIDE servicing, skip.
+            if (entry.servicedWide) {
+              try { this.metrics.servicedWideBlocked = (this.metrics.servicedWideBlocked || 0) + 1; } catch (e) {}
+              try { console.debug && console.debug(`[digipeat] skipping ${toMark} for target=${targetId} because WIDE already serviced`); } catch (e) {}
+              return;
+            }
+            // Mark servicedWide immediately (defensive) so other parallel targets won't also service it
+            entry.servicedWide = true;
+          }
+        } catch (e) {}
+
         // Special-case: a configured route target of 'igate' forwards to an external IGate
         if (String(targetId).toLowerCase() === 'igate') {
           try {
@@ -508,6 +592,7 @@ class ChannelManager extends EventEmitter {
           entry.seen.add(targetId);
           // if we just sent back to the originating channel, ensure the source is marked
           if (targetId === channelId) entry.seen.add(channelId);
+          // (servicedWide is already set earlier for WIDE entries)
           this.seen.set(key, entry);
           // optionally emit an immediate ID beacon for this target channel
           if (target.idOnRepeat) {

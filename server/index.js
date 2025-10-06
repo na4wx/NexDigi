@@ -39,6 +39,10 @@ function applyDigipeaterSettingsToRuntime() {
       if (typeof s.igateForward === 'boolean') ch.options.igate = s.igateForward;
       ch.appendDigiCallsign = (typeof s.appendCallsign === 'boolean') ? s.appendCallsign : (ch.appendDigiCallsign ?? true);
       ch.idOnRepeat = (typeof s.idOnRepeat === 'boolean') ? s.idOnRepeat : (ch.idOnRepeat ?? false);
+      // New: role (fill-in | wide) and maxWideN guardrail
+      ch.role = (typeof s.role === 'string' && s.role) ? s.role.toLowerCase() : (ch.role || 'wide');
+      const mw = Number(s.maxWideN);
+      ch.maxWideN = Number.isFinite(mw) && mw > 0 ? mw : (Number.isFinite(ch.maxWideN) ? ch.maxWideN : 2);
     });
   } catch (e) {
     console.error('Failed applying digipeater settings to runtime:', e);
@@ -48,6 +52,21 @@ function applyDigipeaterSettingsToRuntime() {
 // Update digipeater settings: persist and apply
 const updateDigipeaterSettings = (newSettings) => {
   console.log('[DEBUG] updateDigipeaterSettings called with:', JSON.stringify(newSettings));
+  // Validate and normalize incoming channel settings to avoid invalid runtime state
+  try {
+    if (newSettings && newSettings.channels && typeof newSettings.channels === 'object') {
+      Object.keys(newSettings.channels).forEach((chid) => {
+        const s = newSettings.channels[chid] || {};
+        // normalize role
+        if (typeof s.role === 'string') s.role = String(s.role).toLowerCase();
+        else s.role = 'wide';
+        // normalize maxWideN
+        const mw = Number(s.maxWideN);
+        s.maxWideN = (Number.isFinite(mw) && mw > 0) ? Math.min(7, Math.max(1, mw)) : 2;
+      });
+    }
+  } catch (e) { console.error('Normalization error for digipeater settings', e); }
+
   Object.assign(digipeaterSettings, newSettings);
   try {
     saveDigipeaterSettings(digipeaterSettings);
@@ -57,6 +76,16 @@ const updateDigipeaterSettings = (newSettings) => {
     throw e;
   }
   applyDigipeaterSettingsToRuntime();
+  // restart metric checker when digipeater settings change
+  try { startMetricChecker(); } catch (e) { console.error('Failed to start metric checker after applying settings', e); }
+  // apply seen cache tuning if provided
+  try {
+    if (digipeaterSettings && digipeaterSettings.seenCache) {
+      const sc = digipeaterSettings.seenCache || {};
+      if (typeof sc.ttl === 'number' && sc.ttl > 0) manager.setSeenTTL(sc.ttl);
+      if (typeof sc.maxEntries === 'number' && sc.maxEntries > 0) manager.setMaxSeenEntries(sc.maxEntries);
+    }
+  } catch (e) { console.error('Failed to apply seenCache settings to manager', e); }
   try {
     // Update weather alerts manager
     if (typeof weatherAlerts !== 'undefined' && weatherAlerts) weatherAlerts.updateSettings(digipeaterSettings);
@@ -92,14 +121,19 @@ wss.on('error', (err) => {
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomicSync } = require('./lib/fileHelpers');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const BBS_SETTINGS_PATH = path.join(__dirname, 'data', 'bbsSettings.json');
 const DIGIPEATER_SETTINGS_PATH = path.join(__dirname, 'data', 'digipeaterSettings.json');
+const METRIC_ALERTS_PATH = path.join(__dirname, 'data', 'metricAlerts.json');
 
 const manager = new ChannelManager();
 // WeatherAlertManager will be instantiated after we load digipeaterSettings
 let weatherAlerts = null;
+// LastHeard manager (stores recent heard stations for UI)
+const LastHeard = require('./lib/lastHeard');
+const lastHeard = new LastHeard({ filePath: path.join(__dirname, 'data', 'lastHeard.json') });
 const { parseAx25Frame } = require('./lib/ax25');
 const { formatCallsign } = require('./lib/ax25');
 const net = require('net');
@@ -113,12 +147,95 @@ function pushRecent(out) {
   if (recentFrames.length > RECENT_FRAMES_MAX) recentFrames.pop();
 }
 
+// Metric alerts storage and helper persistence
+let metricAlerts = [];
+function loadMetricAlerts() {
+  try {
+    if (fs.existsSync(METRIC_ALERTS_PATH)) {
+      const raw = fs.readFileSync(METRIC_ALERTS_PATH, 'utf8');
+      metricAlerts = JSON.parse(raw) || [];
+    }
+  } catch (e) { console.error('Failed to load metric alerts:', e); metricAlerts = []; }
+}
+function saveMetricAlerts() {
+  try { writeJsonAtomicSync(METRIC_ALERTS_PATH, metricAlerts); } catch (e) { console.error('Failed to save metric alerts:', e); }
+}
+loadMetricAlerts();
+
+// periodic metric threshold checker
+let metricCheckerInterval = null;
+let lastMetricsSnapshot = manager.getMetrics ? manager.getMetrics() : {};
+function startMetricChecker() {
+  try {
+    // stop existing
+    if (metricCheckerInterval) clearInterval(metricCheckerInterval);
+    // reset last metrics snapshot to avoid spurious alerts on startup
+    try { lastMetricsSnapshot = manager.getMetrics ? manager.getMetrics() : {}; } catch (e) { lastMetricsSnapshot = {}; }
+    const cfgThresh = (digipeaterSettings && digipeaterSettings.metricsThresholds) ? digipeaterSettings.metricsThresholds : {};
+    const intervalSec = (digipeaterSettings && digipeaterSettings.metricsCheckIntervalSec) ? Number(digipeaterSettings.metricsCheckIntervalSec) : 60;
+    const thresholds = Object.assign({ servicedWideBlocked: 10, maxWideBlocked: 10 }, cfgThresh || {});
+    metricCheckerInterval = setInterval(() => {
+      try {
+        const m = manager.getMetrics ? manager.getMetrics() : {};
+        // compare metrics and create alerts when thresholds exceeded (on increase)
+        Object.keys(thresholds).forEach(k => {
+          const val = Number(m[k] || 0);
+          const lastVal = Number(lastMetricsSnapshot[k] || 0);
+          if (val >= thresholds[k] && val > lastVal) {
+            const msg = `Metric threshold exceeded: ${k}=${val} (threshold ${thresholds[k]})`;
+            console.warn(msg);
+            const alert = { ts: Date.now(), metric: k, value: val, threshold: thresholds[k], message: msg };
+            metricAlerts.unshift(alert);
+            if (metricAlerts.length > 200) metricAlerts.pop();
+            saveMetricAlerts();
+          }
+        });
+        lastMetricsSnapshot = m;
+      } catch (e) { console.error('metricChecker tick failed', e); }
+    }, Math.max(5, Number(intervalSec)) * 1000);
+  } catch (e) { console.error('Failed to start metric checker', e); }
+}
+
+// Periodic seen-cache cleanup to keep memory bounded and remove stale entries
+let seenCleanupInterval = null;
+try {
+  if (seenCleanupInterval) clearInterval(seenCleanupInterval);
+  // default cleanup every 10 seconds (tunable)
+  seenCleanupInterval = setInterval(() => {
+    try { manager.cleanupSeen(); } catch (e) { /* ignore */ }
+  }, 10 * 1000);
+} catch (e) { /* ignore */ }
+// begin checker after initial settings applied
+
 // Maintain recent frames globally so /api/frames works even when no websocket client is connected
 manager.on('frame', (event) => {
   let parsed = null;
   try { parsed = parseAx25Frame(Buffer.from(event.raw, 'hex')); } catch (e) { /* ignore */ }
   const out = Object.assign({}, event, { parsed, ts: event.ts || Date.now() });
   pushRecent(out);
+  // record last-heard entries (RX)
+  try {
+    if (lastHeard) {
+      // parsed may be null if parse failed; attempt to extract source callsign from parsed or raw
+      let cs = null;
+      let ssid = null;
+      if (parsed && Array.isArray(parsed.addresses) && parsed.addresses[1]) {
+        cs = parsed.addresses[1].callsign || null;
+        ssid = (typeof parsed.addresses[1].ssid === 'number') ? parsed.addresses[1].ssid : null;
+      }
+      // mode: distinguish Packet vs APRS by heuristics (payload starting with '>' often APRS status)
+      let mode = 'APRS';
+      try {
+        const pld = parsed && parsed.payload ? parsed.payload.toString() : (out && out.parsed && out.parsed.payload ? out.parsed.payload.toString() : null);
+        if (!pld) mode = 'Packet';
+        else if (typeof pld === 'string' && pld.length > 0) {
+          if (pld.startsWith('>') || pld.startsWith('@') || pld.startsWith('!') || pld.startsWith('$')) mode = 'APRS';
+          else mode = 'APRS';
+        }
+      } catch (e) { mode = 'APRS'; }
+      lastHeard.add({ callsign: cs, ssid, mode, channel: event.channel, raw: event.raw, info: (parsed || null), ts: out.ts });
+    }
+  } catch (e) { console.error('lastHeard add error:', e && e.message); }
   // forward to igate if enabled and this channel is allowed
   try {
     if (igate && cfg && cfg.igate && cfg.igate.enabled) {
@@ -184,7 +301,7 @@ function loadConfig() {
 }
 
 function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  writeJsonAtomicSync(CONFIG_PATH, cfg);
 }
 
 function loadBBSSettings() {
@@ -199,7 +316,7 @@ function loadBBSSettings() {
 
 function saveBBSSettings(settings) {
   try {
-    fs.writeFileSync(BBS_SETTINGS_PATH, JSON.stringify(settings, null, 2));
+    writeJsonAtomicSync(BBS_SETTINGS_PATH, settings);
   } catch (e) {
     console.error('Failed to save BBS settings:', e);
   }
@@ -217,7 +334,7 @@ function loadDigipeaterSettings() {
 
 function saveDigipeaterSettings(settings) {
   try {
-    fs.writeFileSync(DIGIPEATER_SETTINGS_PATH, JSON.stringify(settings, null, 2));
+    writeJsonAtomicSync(DIGIPEATER_SETTINGS_PATH, settings);
   } catch (e) {
     console.error('Failed to save Digipeater settings:', e);
   }
@@ -379,6 +496,13 @@ const dependencies = {
   weatherAlerts
 };
 
+// expose lastHeard via dependencies
+dependencies.lastHeard = lastHeard;
+// expose metric alerts management
+dependencies.metricAlerts = metricAlerts;
+dependencies.clearMetricAlerts = () => { metricAlerts = []; saveMetricAlerts(); };
+dependencies.getMetricAlerts = () => metricAlerts;
+
 // Debug middleware to log all requests
 app.use((req, res, next) => {
   if (req.url.includes('/api/channels')) {
@@ -388,6 +512,7 @@ app.use((req, res, next) => {
 });
 
 app.use('/api/channels', channelsRoutes(dependencies));
+app.use('/api/lastheard', require('./routes/lastheard')(dependencies));
 app.use('/api/bbs', bbsRoutes(dependencies));
 app.use('/api', hardwareRoutes(dependencies));
 app.use('/api/igate', igateRoutes({...dependencies, igate}));
@@ -442,6 +567,8 @@ function shutdown(reason) {
   try { console.log('Shutting down...', reason ? '(' + reason + ')' : ''); } catch (e) {}
   try { fs.unwatchFile(CONFIG_PATH); } catch (e) {}
   try { if (aprsCleanupInterval) clearInterval(aprsCleanupInterval); } catch (e) {}
+  try { if (metricCheckerInterval) clearInterval(metricCheckerInterval); } catch (e) {}
+  try { if (seenCleanupInterval) clearInterval(seenCleanupInterval); } catch (e) {}
   try { if (wss && typeof wss.close === 'function') wss.close(); } catch (e) {}
   try { if (server && typeof server.close === 'function') server.close(() => process.exit(0)); } catch (e) { process.exit(0); }
   try {

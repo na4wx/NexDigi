@@ -10,17 +10,40 @@ module.exports = (dependencies) => {
   });
 
   router.post('/settings', (req, res) => {
-    const { enabled, channels, routes, nwsAlerts } = req.body;
+    const { enabled, channels, routes, nwsAlerts, metricsThresholds, metricsCheckIntervalSec } = req.body;
     console.log('[DEBUG] POST /api/digipeater/settings - body:', JSON.stringify(req.body));
     try {
       // ensure nwsAlerts is an object and has repeatExternalBulletins defaulted
       const nws = (nwsAlerts && typeof nwsAlerts === 'object') ? nwsAlerts : {};
       if (typeof nws.repeatExternalBulletins !== 'boolean') nws.repeatExternalBulletins = false;
+
+      // Validate channels: ensure role is fill-in or wide, and maxWideN is numeric 1-7
+      const safeChannels = {};
+      if (channels && typeof channels === 'object') {
+        Object.keys(channels).forEach((cid) => {
+          const s = channels[cid] || {};
+          const r = (typeof s.role === 'string') ? String(s.role).toLowerCase() : 'wide';
+          const role = (r === 'fill-in' || r === 'fillin' || r === 'fill_in') ? 'fill-in' : 'wide';
+          const mw = Number(s.maxWideN);
+          const maxWideN = (Number.isFinite(mw) && mw > 0) ? Math.min(7, Math.max(1, mw)) : 2;
+          safeChannels[cid] = Object.assign({}, s, { role, maxWideN });
+        });
+      }
+
+  // Optional seenCache tuning
+  const seenCache = (req.body.seenCache && typeof req.body.seenCache === 'object') ? req.body.seenCache : undefined;
+  // Optional metric thresholds and check interval
+  const safeMetricsThresholds = (metricsThresholds && typeof metricsThresholds === 'object') ? metricsThresholds : undefined;
+  const safeMetricsCheckIntervalSec = (Number.isFinite(Number(metricsCheckIntervalSec)) && Number(metricsCheckIntervalSec) > 0) ? Number(metricsCheckIntervalSec) : undefined;
+
       updateDigipeaterSettings({ 
         enabled: !!enabled, 
-        channels: channels || {},
+        channels: safeChannels,
         routes: routes || [],
-        nwsAlerts: nws
+        nwsAlerts: nws,
+        seenCache,
+        metricsThresholds: safeMetricsThresholds,
+        metricsCheckIntervalSec: safeMetricsCheckIntervalSec
       });
       console.log('Updated Digipeater settings:', digipeaterSettings);
       res.status(200).send();
@@ -215,6 +238,49 @@ module.exports = (dependencies) => {
       res.json(list);
     } catch (e) {
       console.error('active-alerts error', e);
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  // Expose ChannelManager metrics and seen-cache info
+  router.get('/metrics', (req, res) => {
+    try {
+      const out = { metrics: {}, seen: {} };
+      if (manager && typeof manager.getMetrics === 'function') out.metrics = manager.getMetrics();
+      if (manager) {
+        out.seen = {
+          size: manager.seen ? manager.seen.size : 0,
+          ttl: manager.SEEN_TTL,
+          maxEntries: manager.MAX_SEEN_ENTRIES
+        };
+      }
+      res.json(out);
+    } catch (e) {
+      console.error('metrics endpoint error', e);
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  // Metric alerts listing
+  router.get('/metric-alerts', (req, res) => {
+    try {
+      if (!dependencies || typeof dependencies.getMetricAlerts !== 'function') return res.json([]);
+      const list = dependencies.getMetricAlerts();
+      res.json(list || []);
+    } catch (e) {
+      console.error('metric-alerts error', e);
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  // Clear metric alerts
+  router.post('/metric-alerts/clear', (req, res) => {
+    try {
+      if (!dependencies || typeof dependencies.clearMetricAlerts !== 'function') return res.status(400).json({ error: 'not available' });
+      dependencies.clearMetricAlerts();
+      res.json({ ok: true });
+    } catch (e) {
+      console.error('clear metric-alerts error', e);
       res.status(500).json({ error: 'internal error' });
     }
   });

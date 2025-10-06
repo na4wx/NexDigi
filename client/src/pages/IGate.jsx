@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Box, Typography, Paper, TextField, Button, Switch, FormControlLabel, Alert, Chip, Divider } from '@mui/material'
 
-export default function IGatePage() {
+export default function IGatePage({ setGlobalMessage }) {
   const API_BASE = `${location.protocol}//${location.hostname}:3000`
   const [cfg, setCfg] = useState({ enabled: false, host: '', port: 14580, call: '', pass: '', channels: [] })
   const [status, setStatus] = useState({ connected: false, authenticated: false, enabled: false })
@@ -41,6 +41,7 @@ export default function IGatePage() {
       setCfg(Object.assign({}, cfg, j))
       // Refresh status after save
       setTimeout(fetchStatus, 1000)
+      if (typeof setGlobalMessage === 'function') setGlobalMessage('IGate configuration saved');
     } catch (e) { console.warn(e) }
     setSaving(false)
   }

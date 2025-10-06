@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { writeJsonAtomicSync } = require('./fileHelpers');
 
 // Enhanced BBS system following amateur radio standards
 class BBS {
@@ -30,7 +31,7 @@ class BBS {
       messageCounter: this.messageCounter,
       messages: this.messages
     };
-    fs.writeFileSync(this.storagePath, JSON.stringify(data, null, 2));
+    writeJsonAtomicSync(this.storagePath, data);
   }
 
   getNextMessageNumber() {
