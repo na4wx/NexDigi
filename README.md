@@ -1,4 +1,4 @@
-# NexDigi — modern multi‑channel APRS digipeater
+# NexDigi — modern multi‑channel Packet Toolkit and Digipeater
 
 NexDigi is a modern APRS digipeater with multi‑channel support, cross‑digipeating, duplex operation, and built‑in weather alerts and weather‑alert digipeating, specific to your chosen SAME codes.
 
