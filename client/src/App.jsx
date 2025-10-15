@@ -10,9 +10,11 @@ import GroupIcon from '@mui/icons-material/Group'
 import SettingsPage from './pages/Settings'
 import ActiveAlerts from './pages/ActiveAlerts'
 import LastHeard from './pages/LastHeard'
-// Temporarily comment out BBS UI for upcoming release
-// import BBS from './pages/BBS'
-// import BBSSettings from './pages/BBSSettings'
+// BBS UI is available and conditionally shown based on server settings
+import BBS from './pages/BBS'
+import BBSSettings from './pages/BBSSettings'
+import Backbone from './pages/Backbone'
+import BackboneSettings from './pages/BackboneSettings'
 import axios from 'axios'
 
 export default function App() {
@@ -190,9 +192,9 @@ export default function App() {
             <Button color="inherit" onClick={() => setPage('home')}>Home</Button>
             <Button color="inherit" onClick={() => setPage('frames')}>Frames</Button>
             <Button color="inherit" onClick={() => setPage('lastheard')}>Last Heard</Button>
-            {/* BBS navigation temporarily disabled for future release */}
-            {/* {bbsEnabled && <Button color="inherit" onClick={() => setPage('bbs')}>BBS</Button>} */}
+            {bbsEnabled && <Button color="inherit" onClick={() => setPage('bbs')}>BBS</Button>}
             {alertsEnabled && <Button color="inherit" onClick={() => setPage('alerts')}>Alerts</Button>}
+            <Button color="inherit" onClick={() => setPage('backbone')}>Backbone</Button>
             <Button color="inherit" onClick={() => setPage('settings')}>Settings</Button>
           </Toolbar>
         </AppBar>
@@ -359,16 +361,17 @@ export default function App() {
 
           {page === 'settings' && <SettingsPage />}
           {page === 'alerts' && <ActiveAlerts />}
-  {/* BBS pages temporarily disabled for future release */}
-  {/* {page === 'bbs' && <BBS />} */}
-  {/* {page === 'bbs-settings' && <BBSSettings />} */}
+          {page === 'bbs' && <BBS />}
+          {page === 'bbs-settings' && <BBSSettings />}
+          {page === 'backbone' && <Backbone setPage={setPage} />}
+          {page === 'backbone-settings' && <BackboneSettings />}
         </Container>
       </Box>
 
       {/* Footer */}
-      <footer style={{ textAlign: 'center', padding: '1rem', background: '#f5f5f5' }}>
+      <footer style={{ textAlign: 'center', marginTop: '20px', padding: '1rem', background: '#f5f5f5' }}>
         <Typography variant="body2" color="textSecondary">
-          © 2025 Jordan G Webb, NA4WX
+          <a href='https://na4wx.com' target='__blank'>© 2025 Jordan G Webb, NA4WX</a>
         </Typography>
       </footer>
     </Box>

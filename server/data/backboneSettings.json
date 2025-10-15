@@ -1,0 +1,104 @@
+{
+  "enabled": false,
+  "localCallsign": "N0CALL-10",
+  "transports": {
+    "rf": {
+      "enabled": false,
+      "channelId": null,
+      "services": ["bbs", "aprs-is"],
+      "comment": "Set channelId to the channel ID you want to use for backbone RF traffic"
+    },
+    "internet": {
+      "enabled": false,
+      "mode": "mesh",
+      "port": 14240,
+      "bindAddress": "0.0.0.0",
+      "tls": true,
+      "tlsOptions": {
+        "comment": "You must provide key and cert paths for TLS",
+        "key": null,
+        "cert": null,
+        "ca": null
+      },
+      "hubServer": {
+        "comment": "Only used when mode='client'. Connect to this hub server.",
+        "host": null,
+        "port": 14240,
+        "callsign": null
+      },
+      "hubServers": {
+        "comment": "Optional: Multiple hubs for redundancy. Falls back in order.",
+        "servers": []
+      },
+      "peers": [],
+      "services": ["winlink-cms", "bbs"],
+      "comment": "mode: 'mesh' (P2P, default), 'server' (hub - only listen), 'client' (edge node - connect to hub only). peers: Only used in mesh mode. Add peers as {host, port, callsign} objects."
+    }
+  },
+  "routing": {
+    "algorithm": "link-state",
+    "updateInterval": 300000,
+    "maxHops": 7,
+    "preferInternet": true,
+    "comment": "updateInterval is in milliseconds (default 5 minutes). preferInternet=true favors Internet over RF when both are available."
+  },
+  "services": {
+    "offer": ["bbs"],
+    "request": [],
+    "comment": "Services to offer to the backbone network. Options: bbs, winlink-cms, aprs-is, weather, time"
+  },
+  "_examples": {
+    "comment": "Configuration examples for different deployment scenarios",
+    "hubServer": {
+      "enabled": true,
+      "localCallsign": "HUB-1",
+      "transports": {
+        "internet": {
+          "enabled": true,
+          "mode": "server",
+          "port": 14240,
+          "bindAddress": "0.0.0.0",
+          "tls": true,
+          "services": ["winlink-cms", "bbs", "aprs-is", "weather"]
+        }
+      }
+    },
+    "clientNode": {
+      "enabled": true,
+      "localCallsign": "W1ABC-10",
+      "transports": {
+        "rf": {
+          "enabled": true,
+          "channelId": "radio1",
+          "services": ["bbs"]
+        },
+        "internet": {
+          "enabled": true,
+          "mode": "client",
+          "hubServer": {
+            "host": "backbone.example.com",
+            "port": 14240,
+            "callsign": "HUB-1"
+          },
+          "tls": true
+        }
+      }
+    },
+    "meshNode": {
+      "enabled": true,
+      "localCallsign": "W2DEF-10",
+      "transports": {
+        "internet": {
+          "enabled": true,
+          "mode": "mesh",
+          "port": 14240,
+          "peers": [
+            {"host": "peer1.example.com", "port": 14240, "callsign": "W3GHI-10"},
+            {"host": "peer2.example.com", "port": 14240, "callsign": "W4JKL-10"}
+          ],
+          "tls": true
+        }
+      }
+    }
+  }
+}

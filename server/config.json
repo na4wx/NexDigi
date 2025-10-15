@@ -15,7 +15,7 @@
         "xon": false,
         "xoff": false,
         "verbose": true,
-        "callsign": "na4wx-1",
+        "callsign": "na4wx-5",
         "forceKissOnSerial": true,
         "bbsDelayMs": 1000
       }

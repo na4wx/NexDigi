@@ -24,8 +24,388 @@ import {
   TableRow,
   Autocomplete,
   CircularProgress,
+  Card,
+  CardContent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  IconButton,
 } from '@mui/material';
+import { Settings as SettingsIcon, Close as CloseIcon } from '@mui/icons-material';
 import axios from 'axios';
+
+// Channel Configuration Modal
+function ChannelConfigModal({ open, onClose, channel, channelSettings, updateChannelSetting, maxNErrors }) {
+  if (!channel) return null;
+
+  const getChannelSetting = (setting, defaultValue) => {
+    const ch = channelSettings[channel.id];
+    if (!ch) return defaultValue;
+    
+    if (setting.startsWith('beacon.')) {
+      const beaconField = setting.replace('beacon.', '');
+      const beacon = ch.beacon || {};
+      return Object.prototype.hasOwnProperty.call(beacon, beaconField) ? beacon[beaconField] : defaultValue;
+    }
+    
+    return Object.prototype.hasOwnProperty.call(ch, setting) ? ch[setting] : defaultValue;
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography variant="h6">
+            Configure {channel.name} ({channel.id})
+          </Typography>
+          <IconButton onClick={onClose} size="small">
+            <CloseIcon />
+          </IconButton>
+        </Box>
+      </DialogTitle>
+      
+      <DialogContent dividers>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          
+          {/* Basic Settings */}
+          <Paper sx={{ p: 2 }} variant="outlined">
+            <Typography variant="subtitle1" gutterBottom>Basic Settings</Typography>
+            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Mode</InputLabel>
+                <Select
+                  value={getChannelSetting('mode', 'digipeat')}
+                  onChange={(e) => updateChannelSetting(channel.id, 'mode', e.target.value)}
+                  label="Mode"
+                >
+                  <MenuItem value="digipeat">Digipeat</MenuItem>
+                  <MenuItem value="receive-only">Receive Only</MenuItem>
+                  <MenuItem value="disabled">Disabled</MenuItem>
+                </Select>
+              </FormControl>
+
+              <TextField
+                label="Callsign"
+                value={getChannelSetting('callsign', '')}
+                onChange={(e) => updateChannelSetting(channel.id, 'callsign', e.target.value)}
+                size="small"
+                sx={{ width: 140 }}
+                required={getChannelSetting('mode', 'digipeat') === 'digipeat'}
+              />
+
+              <FormControl size="small" sx={{ minWidth: 150 }}>
+                <InputLabel>Role</InputLabel>
+                <Select
+                  value={getChannelSetting('role', 'wide')}
+                  onChange={(e) => updateChannelSetting(channel.id, 'role', e.target.value)}
+                  label="Role"
+                >
+                  <MenuItem value="fill-in">Fill-in (WIDE1-*)</MenuItem>
+                  <MenuItem value="wide">Wide (WIDE2+)</MenuItem>
+                </Select>
+              </FormControl>
+
+              <TextField
+                label="Max N"
+                type="number"
+                value={getChannelSetting('maxWideN', 2)}
+                onChange={(e) => updateChannelSetting(channel.id, 'maxWideN', e.target.value)}
+                size="small"
+                sx={{ width: 100 }}
+                inputProps={{ min: 1, max: 7 }}
+                error={!!maxNErrors[channel.id]}
+                helperText={maxNErrors[channel.id] || '1-7'}
+              />
+            </Box>
+          </Paper>
+
+          {/* Beacon Settings */}
+          <Paper sx={{ p: 2 }} variant="outlined">
+            <Typography variant="subtitle1" gutterBottom>Scheduled Beacon</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={getChannelSetting('beacon.enabled', false)}
+                    onChange={(e) => updateChannelSetting(channel.id, 'beacon.enabled', e.target.checked)}
+                  />
+                }
+                label="Enable Scheduled Beacon"
+              />
+              
+              {getChannelSetting('beacon.enabled', false) && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, ml: 4 }}>
+                  <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                    <TextField
+                      label="Interval (minutes)"
+                      type="number"
+                      value={getChannelSetting('beacon.intervalMinutes', 15)}
+                      onChange={(e) => updateChannelSetting(channel.id, 'beacon.intervalMinutes', Number(e.target.value))}
+                      size="small"
+                      sx={{ width: 150 }}
+                      inputProps={{ min: 1, max: 1440 }}
+                      helperText="1-1440 minutes"
+                    />
+                    <FormControl size="small" sx={{ width: 200 }}>
+                      <InputLabel>APRS Symbol</InputLabel>
+                      <Select
+                        value={`${getChannelSetting('beacon.symbolTable', '/')}${getChannelSetting('beacon.symbol', 'k')}`}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          const symbolTable = value.charAt(0);
+                          const symbol = value.charAt(1);
+                          updateChannelSetting(channel.id, 'beacon.symbolTable', symbolTable);
+                          updateChannelSetting(channel.id, 'beacon.symbol', symbol);
+                        }}
+                        label="APRS Symbol"
+                      >
+                        <MenuItem value="/k">🏢 Digipeater (/k)</MenuItem>
+                        <MenuItem value="/r">📻 Repeater (/r)</MenuItem>
+                        <MenuItem value="/#">⭐ Star (/#)</MenuItem>
+                        <MenuItem value="/&">🏠 House (/&)</MenuItem>
+                        <MenuItem value="/-">📍 House (/-)</MenuItem>
+                        <MenuItem value="/j">⛽ Gas Station (/j)</MenuItem>
+                        <MenuItem value="/u">🚛 Truck (/u)</MenuItem>
+                        <MenuItem value="/s">⛵ Ship (/s)</MenuItem>
+                        <MenuItem value="/Y">⛵ Yacht (/Y)</MenuItem>
+                        <MenuItem value="/c">🚗 Car (/c)</MenuItem>
+                        <MenuItem value="/v">🚐 Van (/v)</MenuItem>
+                        <MenuItem value="/m">🏍️ Motorcycle (/m)</MenuItem>
+                        <MenuItem value="/b">🚲 Bicycle (/b)</MenuItem>
+                        <MenuItem value="/[">👤 Person (/[)</MenuItem>
+                        <MenuItem value="/I">🏬 Building (/I)</MenuItem>
+                        <MenuItem value="/P">🅿️ Parking (/P)</MenuItem>
+                        <MenuItem value="/h">🏥 Hospital (/h)</MenuItem>
+                        <MenuItem value="/f">🚒 Fire Station (/f)</MenuItem>
+                        <MenuItem value="/p">👮 Police (/p)</MenuItem>
+                        <MenuItem value="/w">🌊 Water (/w)</MenuItem>
+                        <MenuItem value="/W">💧 Water Station (/W)</MenuItem>
+                        <MenuItem value="/X">✖️ X (/X)</MenuItem>
+                        <MenuItem value="/O">⭕ Circle (/O)</MenuItem>
+                        <MenuItem value="/n">📡 Node (\\n)</MenuItem>
+                        <MenuItem value="\\k">📶 Node (\k)</MenuItem>
+                        <MenuItem value="\\r">📻 Alt Repeater (\r)</MenuItem>
+                        <MenuItem value="\\&">💎 Diamond (\&)</MenuItem>
+                        <MenuItem value="\\#">💫 Alt Star (\#)</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Box>
+                  <TextField
+                    label="Beacon Message"
+                    value={getChannelSetting('beacon.message', '')}
+                    onChange={(e) => updateChannelSetting(channel.id, 'beacon.message', e.target.value)}
+                    multiline
+                    rows={3}
+                    fullWidth
+                    placeholder="Status message to broadcast (e.g., 'Durham County Digipeater - 146.52 MHz')"
+                    helperText="This message will be sent as an APRS status beacon"
+                  />
+                </Box>
+              )}
+            </Box>
+          </Paper>
+
+          {/* Advanced Options */}
+          <Paper sx={{ p: 2 }} variant="outlined">
+            <Typography variant="subtitle1" gutterBottom>Advanced Options</Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={getChannelSetting('igateForward', false)}
+                    onChange={(e) => updateChannelSetting(channel.id, 'igateForward', e.target.checked)}
+                  />
+                }
+                label="IGate Forward"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={getChannelSetting('appendCallsign', true)}
+                    onChange={(e) => updateChannelSetting(channel.id, 'appendCallsign', e.target.checked)}
+                  />
+                }
+                label="Append Callsign to Digipeated Frames"
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={getChannelSetting('idOnRepeat', false)}
+                    onChange={(e) => updateChannelSetting(channel.id, 'idOnRepeat', e.target.checked)}
+                  />
+                }
+                label="ID on Repeat"
+              />
+              {/* Winlink per-channel enablement moved to Winlink settings UI */}
+            </Box>
+          </Paper>
+        </Box>
+      </DialogContent>
+      
+      <DialogActions>
+        <Button onClick={onClose} variant="contained">
+          Done
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+function BeaconStatus({ backend }) {
+  const [beaconStatus, setBeaconStatus] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchBeaconStatus = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await axios.get(`${backend}/api/digipeater/beacons/status`);
+      setBeaconStatus(response.data || {});
+    } catch (err) {
+      console.error('Error fetching beacon status:', err);
+      setError('Failed to fetch beacon status');
+      setBeaconStatus({});
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const triggerBeacon = async (channelId) => {
+    try {
+      await axios.post(`${backend}/api/digipeater/beacons/trigger/${channelId}`);
+      // Refresh status after triggering
+      setTimeout(fetchBeaconStatus, 1000);
+    } catch (err) {
+      console.error('Error triggering beacon:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchBeaconStatus();
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(fetchBeaconStatus, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatTimeAgo = (timestamp) => {
+    if (!timestamp) return 'Never';
+    const now = new Date();
+    const then = new Date(timestamp);
+    const diffMs = now - then;
+    const diffMin = Math.floor(diffMs / 60000);
+    const diffHr = Math.floor(diffMin / 60);
+    
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffHr < 24) return `${diffHr}h ${diffMin % 60}m ago`;
+    return then.toLocaleDateString();
+  };
+
+  const formatNextBeacon = (timestamp) => {
+    if (!timestamp) return 'Unknown';
+    const now = new Date();
+    const next = new Date(timestamp);
+    const diffMs = next - now;
+    const diffMin = Math.floor(diffMs / 60000);
+    
+    if (diffMs < 0) return 'Overdue';
+    if (diffMin < 1) return 'Any moment';
+    if (diffMin < 60) return `${diffMin}m`;
+    return `${Math.floor(diffMin / 60)}h ${diffMin % 60}m`;
+  };
+
+  if (loading) {
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <CircularProgress size={20} />
+        <Typography variant="body2">Loading beacon status...</Typography>
+      </Box>
+    );
+  }
+
+  if (error) {
+    return (
+      <Alert severity="error" sx={{ mb: 2 }}>
+        {error}
+        <Button size="small" onClick={fetchBeaconStatus} sx={{ ml: 1 }}>
+          Retry
+        </Button>
+      </Alert>
+    );
+  }
+
+  const beaconChannels = Object.keys(beaconStatus);
+
+  if (beaconChannels.length === 0) {
+    return (
+      <Typography variant="body2" color="textSecondary">
+        No beacons configured. Enable beacons in the per-channel settings above.
+      </Typography>
+    );
+  }
+
+  return (
+    <Box>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Typography variant="body2" color="textSecondary">
+          Active beacon schedules ({beaconChannels.length} configured)
+        </Typography>
+        <Button size="small" onClick={fetchBeaconStatus}>
+          Refresh
+        </Button>
+      </Box>
+      
+      <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+        {beaconChannels.map((channelId) => {
+          const beacon = beaconStatus[channelId];
+          return (
+            <Card key={channelId} sx={{ minWidth: 280 }}>
+              <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                  <Typography variant="subtitle2" fontWeight="bold">
+                    {channelId}
+                  </Typography>
+                  <Chip 
+                    label={beacon.callsign} 
+                    size="small" 
+                    color="primary" 
+                    variant="outlined"
+                  />
+                </Box>
+                
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  <strong>Interval:</strong> {beacon.intervalMinutes} minutes
+                </Typography>
+                
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  <strong>Message:</strong> {beacon.message || 'No message set'}
+                </Typography>
+                
+                <Typography variant="body2" sx={{ mb: 1 }}>
+                  <strong>Last sent:</strong> {formatTimeAgo(beacon.lastSent)}
+                </Typography>
+                
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                  <strong>Next beacon:</strong> {formatNextBeacon(beacon.nextBeacon)}
+                </Typography>
+                
+                <Button 
+                  size="small" 
+                  variant="outlined" 
+                  onClick={() => triggerBeacon(channelId)}
+                  fullWidth
+                >
+                  Send Now
+                </Button>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
 
 export default function DigipeaterSettings({ setGlobalMessage }) {
   const [digipeaterEnabled, setDigipeaterEnabled] = useState(false);
@@ -34,6 +414,7 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
   const [routes, setRoutes] = useState([]);
   const [nwsAlerts, setNwsAlerts] = useState({ enabled: false, pollIntervalSec: 900, sameCodes: [], alertPath: 'WIDE1-1', area: 'ALL', repeatExternalBulletins: false });
   const [seenCache, setSeenCache] = useState({ ttl: 5000, maxEntries: 1000 });
+  const [digipeaterSettings, setDigipeaterSettings] = useState({ coordinates: { latitude: '', longitude: '' } });
   const [sameCodeOptions, setSameCodeOptions] = useState([]);
   const [sameCodesLoading, setSameCodesLoading] = useState(false);
   const [sameStates, setSameStates] = useState([]);
@@ -41,8 +422,22 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
   const [validationErrors, setValidationErrors] = useState({});
   const [maxNErrors, setMaxNErrors] = useState({});
   const [seenCacheErrors, setSeenCacheErrors] = useState({ ttl: '', maxEntries: '' });
+  
+  // Modal state
+  const [configModalOpen, setConfigModalOpen] = useState(false);
+  const [selectedChannel, setSelectedChannel] = useState(null);
 
   const backend = `http://${location.hostname}:3000`;
+
+  const openChannelConfig = (channel) => {
+    setSelectedChannel(channel);
+    setConfigModalOpen(true);
+  };
+
+  const closeChannelConfig = () => {
+    setConfigModalOpen(false);
+    setSelectedChannel(null);
+  };
 
   useEffect(() => {
     fetchSettings();
@@ -96,14 +491,21 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
       setDigipeaterEnabled(response.data.enabled || false);
       setChannelSettings(response.data.channels || {});
       setRoutes(response.data.routes || []);
-  setNwsAlerts(response.data.nwsAlerts || { enabled: false, pollIntervalSec: 900, sameCodes: [], alertPath: 'WIDE1-1', area: 'ALL' });
-  // load seenCache defaults from backend if present
-  if (response.data && response.data.seenCache && typeof response.data.seenCache === 'object') {
-    const sc = response.data.seenCache;
-    const ttl = Number.isFinite(Number(sc.ttl)) ? Number(sc.ttl) : 5000;
-    const maxEntries = Number.isFinite(Number(sc.maxEntries)) ? Number(sc.maxEntries) : 1000;
-    setSeenCache({ ttl: Math.max(1, ttl), maxEntries: Math.max(1, maxEntries) });
-  }
+      setNwsAlerts(response.data.nwsAlerts || { enabled: false, pollIntervalSec: 900, sameCodes: [], alertPath: 'WIDE1-1', area: 'ALL' });
+      
+      // Load coordinates
+      setDigipeaterSettings(prev => ({
+        ...prev,
+        coordinates: response.data.coordinates || { latitude: '', longitude: '' }
+      }));
+      
+      // load seenCache defaults from backend if present
+      if (response.data && response.data.seenCache && typeof response.data.seenCache === 'object') {
+        const sc = response.data.seenCache;
+        const ttl = Number.isFinite(Number(sc.ttl)) ? Number(sc.ttl) : 5000;
+        const maxEntries = Number.isFinite(Number(sc.maxEntries)) ? Number(sc.maxEntries) : 1000;
+        setSeenCache({ ttl: Math.max(1, ttl), maxEntries: Math.max(1, maxEntries) });
+      }
     } catch (error) {
       console.error('Error fetching Digipeater settings:', error);
       // Set defaults if API doesn't exist yet
@@ -128,6 +530,22 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
       }
     }
 
+    // Handle beacon settings with nested object structure
+    if (setting.startsWith('beacon.')) {
+      const beaconField = setting.replace('beacon.', '');
+      setChannelSettings(prev => ({
+        ...prev,
+        [channelId]: {
+          ...prev[channelId],
+          beacon: {
+            ...(prev[channelId]?.beacon || {}),
+            [beaconField]: value
+          }
+        }
+      }));
+      return;
+    }
+
     setChannelSettings(prev => ({
       ...prev,
       [channelId]: {
@@ -148,6 +566,14 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
   const getChannelSetting = (channelId, setting, defaultValue) => {
     const ch = channelSettings[channelId];
     if (!ch) return defaultValue;
+    
+    // Handle beacon settings with nested object structure
+    if (setting.startsWith('beacon.')) {
+      const beaconField = setting.replace('beacon.', '');
+      const beacon = ch.beacon || {};
+      return Object.prototype.hasOwnProperty.call(beacon, beaconField) ? beacon[beaconField] : defaultValue;
+    }
+    
     // Return the stored value even if it's falsy (false should be honored)
     if (Object.prototype.hasOwnProperty.call(ch, setting)) return ch[setting];
     return defaultValue;
@@ -215,6 +641,7 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
 
       const settings = {
         enabled: digipeaterEnabled,
+        coordinates: digipeaterSettings.coordinates,
         channels: normalizedChannels,
         routes: routes.filter(route => route.from && route.to),
         nwsAlerts,
@@ -406,6 +833,46 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
             helperText={seenCacheErrors.maxEntries || 'Max entries kept in-memory (default 1000)'}
           />
         </Box>
+
+        {/* Coordinates Section */}
+        <Divider sx={{ my: 2 }} />
+        <Typography variant="subtitle1" gutterBottom>Position Coordinates</Typography>
+        <Typography variant="body2" color="textSecondary" sx={{ mb: 1 }}>
+          Set the digipeater's coordinates for position beacons. Leave empty for status-only beacons.
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', mb: 1 }}>
+          <TextField
+            label="Latitude (decimal degrees)"
+            size="small"
+            value={digipeaterSettings.coordinates?.latitude || ''}
+            onChange={(e) => setDigipeaterSettings(prev => ({
+              ...prev,
+              coordinates: {
+                ...prev.coordinates,
+                latitude: e.target.value
+              }
+            }))}
+            placeholder="e.g., 35.7796"
+            sx={{ width: 200 }}
+            helperText="Positive for North, negative for South"
+          />
+
+          <TextField
+            label="Longitude (decimal degrees)"
+            size="small"
+            value={digipeaterSettings.coordinates?.longitude || ''}
+            onChange={(e) => setDigipeaterSettings(prev => ({
+              ...prev,
+              coordinates: {
+                ...prev.coordinates,
+                longitude: e.target.value
+              }
+            }))}
+            placeholder="e.g., -78.6382"
+            sx={{ width: 200 }}
+            helperText="Positive for East, negative for West"
+          />
+        </Box>
       </Paper>
 
       <Paper sx={{ p: 3, mb: 3 }}>
@@ -419,11 +886,10 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
               <TableRow>
                 <TableCell>Channel</TableCell>
                 <TableCell>Mode</TableCell>
-                <TableCell>Role</TableCell>
-                <TableCell>Max N</TableCell>
                 <TableCell>Callsign</TableCell>
-                <TableCell>IGate Forward</TableCell>
-                <TableCell>Options</TableCell>
+                <TableCell>Role</TableCell>
+                <TableCell>Beacon</TableCell>
+                <TableCell>Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -442,39 +908,12 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
                       value={getChannelSetting(channel.id, 'mode', 'digipeat')}
                       onChange={(e) => updateChannelSetting(channel.id, 'mode', e.target.value)}
                       size="small"
+                      sx={{ minWidth: 120 }}
                     >
                       <MenuItem value="digipeat">Digipeat</MenuItem>
                       <MenuItem value="receive-only">Receive Only</MenuItem>
                       <MenuItem value="disabled">Disabled</MenuItem>
                     </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title="Choose how this channel services WIDE path entries: 'Fill-in' handles WIDE1 entries (local fill-in), 'Wide' handles WIDE2+ entries (regional).">
-                      <FormControl size="small">
-                        <Select
-                          value={getChannelSetting(channel.id, 'role', 'wide')}
-                          onChange={(e) => updateChannelSetting(channel.id, 'role', e.target.value)}
-                          size="small"
-                        >
-                          <MenuItem value="fill-in">Fill-in (WIDE1-*)</MenuItem>
-                          <MenuItem value="wide">Wide (WIDE2+)</MenuItem>
-                        </Select>
-                      </FormControl>
-                    </Tooltip>
-                  </TableCell>
-                  <TableCell>
-                    <Tooltip title="Maximum WIDE hop number this channel will service (1-7). Use lower numbers to limit propagation).">
-                      <TextField
-                        type="number"
-                        value={getChannelSetting(channel.id, 'maxWideN', 2)}
-                        onChange={(e) => updateChannelSetting(channel.id, 'maxWideN', e.target.value)}
-                        size="small"
-                        sx={{ width: '110px' }}
-                        inputProps={{ min: 1, max: 7 }}
-                        error={!!maxNErrors[channel.id]}
-                        helperText={maxNErrors[channel.id] || '1-7 (default 2)'}
-                      />
-                    </Tooltip>
                   </TableCell>
                   <TableCell>
                     <TextField
@@ -489,40 +928,50 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
                     />
                   </TableCell>
                   <TableCell>
-                    <Switch
-                      checked={getChannelSetting(channel.id, 'igateForward', false)}
-                      onChange={(e) => updateChannelSetting(channel.id, 'igateForward', e.target.checked)}
+                    <Chip 
+                      label={getChannelSetting(channel.id, 'role', 'wide') === 'fill-in' ? 'Fill-in' : 'Wide'} 
+                      size="small" 
+                      color={getChannelSetting(channel.id, 'role', 'wide') === 'fill-in' ? 'secondary' : 'primary'}
+                      variant="outlined"
                     />
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={getChannelSetting(channel.id, 'appendCallsign', true)}
-                            onChange={(e) => updateChannelSetting(channel.id, 'appendCallsign', e.target.checked)}
-                            size="small"
-                          />
-                        }
-                        label={<Typography variant="caption">Append ID</Typography>}
+                    {getChannelSetting(channel.id, 'beacon.enabled', false) ? (
+                      <Chip 
+                        label={`${getChannelSetting(channel.id, 'beacon.intervalMinutes', 15)}min`} 
+                        size="small" 
+                        color="success"
                       />
-                      <FormControlLabel
-                        control={
-                          <Switch
-                            checked={getChannelSetting(channel.id, 'idOnRepeat', false)}
-                            onChange={(e) => updateChannelSetting(channel.id, 'idOnRepeat', e.target.checked)}
-                            size="small"
-                          />
-                        }
-                        label={<Typography variant="caption">ID on Repeat</Typography>}
+                    ) : (
+                      <Chip 
+                        label="Disabled" 
+                        size="small" 
+                        variant="outlined"
                       />
-                    </Box>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<SettingsIcon />}
+                      onClick={() => openChannelConfig(channel)}
+                    >
+                      Configure
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
+      </Paper>
+
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          Beacon Status
+        </Typography>
+        <BeaconStatus backend={backend} />
       </Paper>
 
       <Paper sx={{ p: 3, mb: 3 }}>
@@ -746,6 +1195,16 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
           Save Settings
         </Button>
       </Box>
+
+      {/* Channel Configuration Modal */}
+      <ChannelConfigModal
+        open={configModalOpen}
+        onClose={closeChannelConfig}
+        channel={selectedChannel}
+        channelSettings={channelSettings}
+        updateChannelSetting={updateChannelSetting}
+        maxNErrors={maxNErrors}
+      />
     </Box>
   );
 }

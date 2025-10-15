@@ -88,10 +88,10 @@ function formatAprsBulletin({ sameCode, event, area, until, body, options = {} }
     let text = normalizeText(headline, uppercase);
     if (includeSame && sameCodes.length) {
       const s = `SAME:${sameCodes.join(',')}`;
-      // prepend SAME tag if it fits, otherwise append
-      if ((s + ' ' + text).length <= max) text = `${s} ${text}`;
-      else if ((text + ' ' + s).length <= max) text = `${text} ${s}`;
-      else text = (s + ' ' + text).slice(0, max);
+      // append SAME tag if it fits, otherwise prepend
+      if ((text + ' ' + s).length <= max) text = `${text} ${s}`;
+      else if ((s + ' ' + text).length <= max) text = `${s} ${text}`;
+      else text = (text + ' ' + s).slice(0, max);
     }
     text = text.slice(0, max);
     return [{ to: toFull, dest, text }];
@@ -105,16 +105,16 @@ function formatAprsBulletin({ sameCode, event, area, until, body, options = {} }
     lines.push(...chunks);
   }
   const frames = lines.map(text => ({ to: toFull, dest, text }));
-  // If requested, prepend SAME codes to the first frame text (or create one if none)
+  // If requested, append SAME codes to the last frame text (or create one if none)
   if (includeSame && sameCodes.length) {
     const s = `SAME:${sameCodes.join(',')}`;
     if (frames.length === 0) {
       frames.push({ to: toFull, dest, text: s.slice(0, max) });
     } else {
-      const first = frames[0];
-      if ((s + ' ' + first.text).length <= max) first.text = `${s} ${first.text}`;
-      else if ((first.text + ' ' + s).length <= max) first.text = `${first.text} ${s}`;
-      else first.text = (s + ' ' + first.text).slice(0, max);
+      const last = frames[frames.length - 1];
+      if ((last.text + ' ' + s).length <= max) last.text = `${last.text} ${s}`;
+      else if ((s + ' ' + last.text).length <= max) last.text = `${s} ${last.text}`;
+      else frames.push({ to: toFull, dest, text: s.slice(0, max) });
     }
   }
   return frames;

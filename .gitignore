@@ -6,3 +6,6 @@ build/
 *.log
 /.vscode/
 /.idea/
+*ANALYSIS*.md
+*PROGRESS*.md
+*test_*

@@ -2,8 +2,8 @@ import React, { useState } from 'react'
 import { Box, Tabs, Tab, TextField, Alert } from '@mui/material'
 import ChannelsPage from './Channels'
 import IGatePage from './IGate'
-// Temporarily hide BBS Settings tab for upcoming release
-// import BBSSettings from './BBSSettings'
+import WinlinkSettings from './WinlinkSettings'
+import BBSSettings from './BBSSettings'
 import DigipeaterSettings from './DigipeaterSettings'
 
 export default function SettingsPage() {
@@ -31,8 +31,8 @@ export default function SettingsPage() {
           <Tab label="Channels" />
           <Tab label="Digipeater" />
           <Tab label="IGate" />
-          {/* BBS Settings tab temporarily hidden for future release */}
-          {/* <Tab label="BBS Settings" /> */}
+          <Tab label="BBS Settings" />
+          <Tab label="Winlink" />
         </Tabs>
       </Box>
 
@@ -57,8 +57,8 @@ export default function SettingsPage() {
         )}
   {tab === 1 && <DigipeaterSettings setGlobalMessage={setGlobalMessage} />}
     {tab === 2 && <IGatePage setGlobalMessage={setGlobalMessage} />}
-  {/* BBS Settings content temporarily hidden for future release */}
-  {/* {tab === 3 && <BBSSettings />} */}
+    {tab === 3 && <BBSSettings setGlobalMessage={setGlobalMessage} />}
+    {tab === 4 && <WinlinkSettings setGlobalMessage={setGlobalMessage} />}
       </Box>
     </Box>
   )
