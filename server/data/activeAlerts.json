@@ -34,5 +34,41 @@
         }
       ]
     }
+  },
+  "urn:oid:2.49.0.1.840.0.99645d6239d02c8466103ba1df59e8bcd9666856.003.1": {
+    "hash": "ee92d55626134f3cd1c8bcb5766db9751149e890",
+    "lastSent": 1760542590,
+    "alert": {
+      "id": "urn:oid:2.49.0.1.840.0.99645d6239d02c8466103ba1df59e8bcd9666856.003.1",
+      "same": [
+        "037031"
+      ],
+      "event": "Coastal Flood Advisory",
+      "headline": "Coastal Flood Advisory issued October 15 at 11:35AM EDT until October 17 at 8:00PM EDT by NWS Newport/Morehead City NC",
+      "area": "East Carteret",
+      "effective": "2025-10-15T11:35:00-04:00",
+      "expires": "2025-10-15T23:45:00-04:00",
+      "description": "* WHAT...Up to 1 to 2 feet of inundation above ground level in\nlow-lying areas near shorelines and tidal waterways.\n\n* WHERE...Areas along the lower Neuse River, Pamlico, Core and\nBack Sounds, and adjacent tidal creeks.\n\n* WHEN...Until 8 PM EDT Friday.\n\n* IMPACTS...Up to 1 to 2 feet of inundation above ground level is\npossible in low-lying areas near shorelines and tidal waterways\nresulting in a low threat of property damage. Some roads and low\nlying property including parking lots, parks, lawns, and homes\nadjacent to the waterfront will experience shallow flooding.",
+      "instruction": "If travel is required, allow extra time as some roads may be\nclosed. Do not drive around barricades or through water of\nunknown depth. Take the necessary actions to protect flood-prone\nproperty.",
+      "url": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.99645d6239d02c8466103ba1df59e8bcd9666856.003.1",
+      "bulletin": {
+        "frames": [
+          {
+            "to": "BLN4FLD",
+            "dest": "BLN4FL",
+            "text": "COASTAL FLOOD ADVISORY EAST CARTERET TIL 11: 45 PM SAME:037031"
+          }
+        ]
+      },
+      "bulletinTag": "ALLWX",
+      "bulletinDest": "ALLWX",
+      "frames": [
+        {
+          "to": "BLN4FLD",
+          "dest": "BLN4FL",
+          "text": "COASTAL FLOOD ADVISORY EAST CARTERET TIL 11: 45 PM SAME:037031"
+        }
+      ]
+    }
   }
 }
