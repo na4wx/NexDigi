@@ -1,28 +1,26 @@
 {
-  "urn:oid:2.49.0.1.840.0.93136a7e4d678c7a7467fd07641088c287a92630.001.1": {
-    "hash": "92fb5ffa4bf12da6113ea0c3f87f6a1f9df88cfa",
-    "lastSent": 1759763870,
+  "urn:oid:2.49.0.1.840.0.9b3987c88ef06d8ce9178cd3497a06f599c3ed60.003.1": {
+    "hash": "4c7c9e8a28052ed762d07f1b9cab267e850e6819",
+    "lastSent": 1760513842,
     "alert": {
-      "id": "urn:oid:2.49.0.1.840.0.93136a7e4d678c7a7467fd07641088c287a92630.001.1",
+      "id": "urn:oid:2.49.0.1.840.0.9b3987c88ef06d8ce9178cd3497a06f599c3ed60.003.1",
       "same": [
-        "037031",
-        "037055",
-        "037095"
+        "037031"
       ],
-      "event": "Beach Hazards Statement",
-      "headline": "Beach Hazards Statement issued October 6 at 11:11AM EDT until October 6 at 8:00PM EDT by NWS Newport/Morehead City NC",
-      "area": "East Carteret; Northern Outer Banks; Ocracoke Island; Hatteras Island",
-      "effective": "2025-10-06T11:11:00-04:00",
-      "expires": "2025-10-06T20:00:00-04:00",
-      "description": "* WHAT...Dangerous rip currents and large breaking waves in the\nsurf zone.\n\n* WHERE...Ocracoke Island, beaches north of Cape Hatteras, and\nCore Banks beaches.\n\n* WHEN...Through this evening.\n\n* IMPACTS...Rip currents can sweep even the best swimmers away\nfrom shore into deeper water. Dangerous shore break can throw\na swimmer or surfer head first into the bottom causing neck\nand back injuries.\n\n* ADDITIONAL DETAILS...The most likely time for strong rip\ncurrents to occur is a couple hours either side of low tide,\nwhich will occur around 1:30 PM.",
-      "instruction": "Life-threatening rip currents. If caught in a rip current, remain\ncalm. Swim in a direction following the shoreline. If tired,\nfloat or tread water until out of the rip current. If unable to\nescape, face the shore and call or wave for help.\n\nShore break occurs when waves break directly on the beach. It is\nextremely important to protect your head and neck whenever you\nare in breaking waves by keeping your hands in front of you at\nall times.",
-      "url": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.93136a7e4d678c7a7467fd07641088c287a92630.001.1",
+      "event": "Coastal Flood Advisory",
+      "headline": "Coastal Flood Advisory issued October 15 at 3:35AM EDT until October 17 at 8:00PM EDT by NWS Newport/Morehead City NC",
+      "area": "East Carteret",
+      "effective": "2025-10-15T03:35:00-04:00",
+      "expires": "2025-10-15T15:45:00-04:00",
+      "description": "* WHAT...Up to 1 to 2 feet of inundation above ground level in\nlow-lying areas near shorelines and tidal waterways.\n\n* WHERE...Areas along the lower Neuse River, Pamlico, Core and\nBack Sounds, and adjacent tidal creeks.\n\n* WHEN...Until 8 PM EDT Friday.\n\n* IMPACTS...Up to 1 to 2 feet of inundation above ground level is\npossible in low-lying areas near shorelines and tidal waterways\nresulting in a low threat of property damage. Some roads and\nlow lying property including parking lots, parks, lawns, and\nhomes adjacent to the waterfront will experience shallow\nflooding.",
+      "instruction": "If travel is required, allow extra time as some roads may be\nclosed. Do not drive around barricades or through water of\nunknown depth. Take the necessary actions to protect flood-prone\nproperty.",
+      "url": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.9b3987c88ef06d8ce9178cd3497a06f599c3ed60.003.1",
       "bulletin": {
         "frames": [
           {
-            "to": "BLN1WX",
-            "dest": "BLN1WX",
-            "text": "SAME:037031,037055,037095 BEACH HAZARDS STATEMENT EAST CARTERET; NORTHERN OUTER BANKS; OCRACOKE ISLAND; HATTERAS ISLAND TIL 8: 00 PM"
+            "to": "BLN4FLD",
+            "dest": "BLN4FL",
+            "text": "COASTAL FLOOD ADVISORY EAST CARTERET TIL 3: 45 PM SAME:037031"
           }
         ]
       },
@@ -30,9 +28,9 @@
       "bulletinDest": "ALLWX",
       "frames": [
         {
-          "to": "BLN1WX",
-          "dest": "BLN1WX",
-          "text": "SAME:037031,037055,037095 BEACH HAZARDS STATEMENT EAST CARTERET; NORTHERN OUTER BANKS; OCRACOKE ISLAND; HATTERAS ISLAND TIL 8: 00 PM"
+          "to": "BLN4FLD",
+          "dest": "BLN4FL",
+          "text": "COASTAL FLOOD ADVISORY EAST CARTERET TIL 3: 45 PM SAME:037031"
         }
       ]
     }

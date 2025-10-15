@@ -126,5 +126,33 @@ module.exports = (dependencies) => {
     res.status(200).send();
   });
 
+  // Message alert system endpoints
+  router.get('/alerts/status', (req, res) => {
+    try {
+      const alertManager = dependencies.messageAlertManager && dependencies.messageAlertManager();
+      if (!alertManager) return res.status(500).json({ error: 'Alert manager not available' });
+      
+      const stats = alertManager.getAlertStats();
+      res.json(stats);
+    } catch (e) {
+      console.error('Error getting alert status:', e);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
+  router.post('/alerts/clear/:callsign', (req, res) => {
+    try {
+      const { callsign } = req.params;
+      const alertManager = dependencies.messageAlertManager && dependencies.messageAlertManager();
+      if (!alertManager) return res.status(500).json({ error: 'Alert manager not available' });
+      
+      alertManager.markMessagesRetrieved(callsign);
+      res.json({ ok: true, message: `Cleared alerts for ${callsign}` });
+    } catch (e) {
+      console.error('Error clearing alerts:', e);
+      res.status(500).json({ error: 'Internal error' });
+    }
+  });
+
   return router;
 };

@@ -140,7 +140,7 @@ module.exports = { parseAx25Frame, parseAddressField, formatCallsign, serviceAdd
 // Build a minimal AX.25 frame (destination, source, optional path none) with given control/pid/payload
 // control: 0x2F SABM, 0x63 UA, 0x43 DISC, 0x0F DM, 0x03 UI, 0x00 I (Ns=0/Nr=0)
 function buildAx25Frame(opts) {
-  const { dest, src, control = 0x03, pid = 0xF0, payload } = opts || {};
+  const { dest, src, control = 0x03, pid = 0xF0, payload, commandType } = opts || {};
   if (!dest || !src) throw new Error('buildAx25Frame requires dest and src');
   const parseCall = (call) => {
     const m = String(call || '').toUpperCase().match(/^([A-Z0-9]{1,6})(?:-(\d+))?$/);
@@ -150,6 +150,17 @@ function buildAx25Frame(opts) {
   const s = parseCall(src);
   const destAddr = formatCallsign(d.base, d.ssid);
   const srcAddr = formatCallsign(s.base, s.ssid);
+  // AX.25 V2.0 Command/Response bit (C) usage simplified:
+  // For a Command frame: set C bit (bit7) of destination, clear in source.
+  // For a Response frame: clear C bit in destination, set in source.
+  // If commandType not provided, leave as default (both cleared).
+  if (commandType === 'command') {
+    destAddr[6] = destAddr[6] | 0x80;      // set C bit in dest
+    srcAddr[6] = srcAddr[6] & ~0x80;       // clear in src
+  } else if (commandType === 'response') {
+    destAddr[6] = destAddr[6] & ~0x80;     // clear in dest
+    srcAddr[6] = srcAddr[6] | 0x80;        // set in src
+  }
   // mark EA on last address (source)
   srcAddr[6] = srcAddr[6] | 0x01;
   const controlBuf = Buffer.from([control & 0xFF]);

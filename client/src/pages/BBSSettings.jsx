@@ -21,6 +21,7 @@ import axios from 'axios';
 export default function BBSSettings() {
   const [bbsEnabled, setBbsEnabled] = useState(false);
   const [callsign, setCallsign] = useState('');
+  const [frameDelayMs, setFrameDelayMs] = useState(60);
   const [selectedChannels, setSelectedChannels] = useState([]);
   const [availableChannels, setAvailableChannels] = useState([]);
   const [saveMessage, setSaveMessage] = useState('');
@@ -47,6 +48,7 @@ export default function BBSSettings() {
       setBbsEnabled(response.data.enabled);
       setCallsign(response.data.callsign);
       setSelectedChannels(response.data.channels || []);
+      setFrameDelayMs(typeof response.data.frameDelayMs === 'number' ? response.data.frameDelayMs : (response.data.frameDelayMs ? Number(response.data.frameDelayMs) : 60));
     } catch (error) {
       console.error('Error fetching BBS settings:', error);
     }
@@ -57,7 +59,8 @@ export default function BBSSettings() {
       await axios.post(`${backend}/api/bbs/settings`, { 
         enabled: bbsEnabled, 
         callsign: callsign.toUpperCase(),
-        channels: selectedChannels
+        channels: selectedChannels,
+        frameDelayMs: Number(frameDelayMs) || 0
       });
       setSaveMessage('Settings saved successfully!');
       setTimeout(() => setSaveMessage(''), 3000);
@@ -114,6 +117,17 @@ export default function BBSSettings() {
           helperText="The callsign that will respond to APRS messages"
           disabled={!bbsEnabled}
           placeholder="ex: W1BBS"
+        />
+
+        <TextField
+          label="Global frame/menu delay (ms)"
+          type="number"
+          value={frameDelayMs}
+          onChange={(e) => setFrameDelayMs(Number(e.target.value || 0))}
+          fullWidth
+          margin="normal"
+          helperText="Delay used to stagger multi-line BBS menus (can be overridden per-channel)."
+          disabled={!bbsEnabled}
         />
 
         <FormControl fullWidth margin="normal" disabled={!bbsEnabled}>

@@ -1,18 +1,38 @@
 {
   "enabled": true,
+  "coordinates": {
+    "latitude": "35.6854",
+    "longitude": "-83.9961",
+    "comment": "Coordinates in decimal degrees (e.g., 35.7796, -78.6382)"
+  },
   "channels": {
     "radio1": {
       "callsign": "NA4WX-9",
-      "mode": "digipeat",
+      "mode": "disabled",
+      "appendCallsign": true,
       "role": "wide",
-      "maxWideN": 2
+      "maxWideN": 2,
+      "beacon": {
+        "enabled": false,
+        "intervalMinutes": 10,
+        "message": "NA4WX-9 Digipeater - Raleigh, NC",
+        "symbol": "k",
+        "symbolTable": "/"
+      }
     },
     "radio2": {
-      "mode": "disabled",
+      "mode": "digipeat",
       "callsign": "na4wx-5",
       "appendCallsign": true,
       "role": "wide",
-      "maxWideN": 2
+      "maxWideN": 2,
+      "beacon": {
+        "enabled": true,
+        "intervalMinutes": 15,
+        "message": "NA4WX's NexDigi - Blount County, TN",
+        "symbol": "#",
+        "symbolTable": "/"
+      }
     }
   },
   "routes": [
@@ -25,6 +45,13 @@
       "to": "radio1"
     }
   ],
+  "lookup": {
+    "enabled": true,
+    "callsign": "NA4WX-5",
+    "endpointTemplate": "https://callook.info/{CALL}/json",
+    "timeoutMs": 5000,
+    "cacheTtlMs": 600000
+  },
   "nwsAlerts": {
     "enabled": true,
     "pollIntervalSec": 120,
@@ -36,5 +63,14 @@
     "area": "NC",
     "recentlySentTTL": 1800,
     "repeatExternalBulletins": false
-  }
+  },
+  "seenCache": {
+    "ttl": 5000,
+    "maxEntries": 1000
+  },
+  "metricsThresholds": {
+    "servicedWideBlocked": 10,
+    "maxWideBlocked": 10
+  },
+  "metricsCheckIntervalSec": 60
 }

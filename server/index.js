@@ -7,9 +7,18 @@ const BBS = require('./lib/bbs');
 const APRSMessageHandler = require('./lib/aprsMessageHandler');
 const BBSSessionManager = require('./lib/bbsSession');
 const WeatherAlertManager = require('./lib/weatherAlerts');
+const LookupHandler = require('./lib/lookupHandler');
+const BeaconScheduler = require('./lib/beaconScheduler');
+const MessageAlertManager = require('./lib/messageAlertManager');
+const BackboneManager = require('./lib/backbone/BackboneManager');
 const bbs = new BBS();
+const WinlinkManager = require('./lib/winlinkManager');
 let aprsMessageHandler = null;
 let bbsSessionManager = null;
+let lookupHandler = null;
+let beaconScheduler = null;
+let messageAlertManager = null;
+let backboneManager = null;
 
 const app = express();
 // Apply digipeater settings (routes + per-channel options) to runtime
@@ -90,6 +99,10 @@ const updateDigipeaterSettings = (newSettings) => {
     // Update weather alerts manager
     if (typeof weatherAlerts !== 'undefined' && weatherAlerts) weatherAlerts.updateSettings(digipeaterSettings);
   } catch (e) { console.error('Failed to update weatherAlerts settings:', e); }
+  try {
+    // Update beacon scheduler
+    if (typeof beaconScheduler !== 'undefined' && beaconScheduler) beaconScheduler.updateSettings(digipeaterSettings);
+  } catch (e) { console.error('Failed to update beacon scheduler settings:', e); }
   console.log('Digipeater settings updated:', {
     enabled: digipeaterSettings.enabled,
     channelCount: Object.keys(digipeaterSettings.channels || {}).length,
@@ -127,10 +140,12 @@ const CONFIG_PATH = path.join(__dirname, 'config.json');
 const BBS_SETTINGS_PATH = path.join(__dirname, 'data', 'bbsSettings.json');
 const DIGIPEATER_SETTINGS_PATH = path.join(__dirname, 'data', 'digipeaterSettings.json');
 const METRIC_ALERTS_PATH = path.join(__dirname, 'data', 'metricAlerts.json');
+const WINLINK_SETTINGS_PATH = path.join(__dirname, 'data', 'winlinkSettings.json');
 
 const manager = new ChannelManager();
 // WeatherAlertManager will be instantiated after we load digipeaterSettings
 let weatherAlerts = null;
+let winlinkManager = null;
 // LastHeard manager (stores recent heard stations for UI)
 const LastHeard = require('./lib/lastHeard');
 const lastHeard = new LastHeard({ filePath: path.join(__dirname, 'data', 'lastHeard.json') });
@@ -375,6 +390,50 @@ try {
   weatherAlerts = new WeatherAlertManager({ manager, settings: null });
   if (weatherAlerts) weatherAlerts.updateSettings(digipeaterSettings);
 } catch (e) { console.error('Failed to initialize WeatherAlertManager:', e); }
+// Initialize WinlinkManager (simple stub manager)
+try {
+  const WinlinkManager = require('./lib/winlinkManager');
+  winlinkManager = new WinlinkManager({ settingsPath: WINLINK_SETTINGS_PATH, manager, digipeaterSettings });
+  console.log('WinlinkManager created, settings:', winlinkManager.settings);
+  // If autoConnect requested, optionally start (non-blocking)
+  if (winlinkManager.settings && winlinkManager.settings.autoConnect) {
+    console.log('Auto-starting WinlinkManager...');
+    try { winlinkManager.start(); } catch (e) { console.error('Failed to auto-start WinlinkManager:', e); }
+  } else {
+    console.log('WinlinkManager not auto-starting, autoConnect:', winlinkManager.settings?.autoConnect);
+  }
+} catch (e) { console.error('Failed to initialize WinlinkManager:', e); }
+
+// Initialize BackboneManager (mesh networking)
+try {
+  backboneManager = new BackboneManager(manager);
+  console.log('BackboneManager created');
+  
+  // Initialize backbone asynchronously (non-blocking)
+  backboneManager.initialize().then(() => {
+    if (backboneManager.enabled) {
+      console.log('BackboneManager initialized and running');
+      
+      // Listen for incoming data from backbone
+      backboneManager.on('data', (packet) => {
+        console.log(`[Backbone] Data received from ${packet.source}:`, packet.data.length, 'bytes');
+        // TODO: Route data to appropriate handler (BBS, Winlink, etc.)
+      });
+      
+      backboneManager.on('neighbor-update', (callsign, info) => {
+        console.log(`[Backbone] Neighbor update: ${callsign}, transports: ${info.transports.join(', ')}`);
+      });
+    } else {
+      console.log('BackboneManager initialized but disabled in configuration');
+    }
+  }).catch(err => {
+    console.error('Failed to initialize BackboneManager:', err.message);
+  });
+} catch (e) { 
+  console.error('Failed to create BackboneManager:', e); 
+  backboneManager = null;
+}
+
 function createAdapterForChannel(c) {
   if (!c || !c.type) return null;
   if (c.type === 'mock') return new MockAdapter(c.id);
@@ -431,9 +490,43 @@ if (Array.isArray(cfg.channels)) {
   });
 }
 
+// Debug: dump initial channel -> adapter port information
+try {
+  console.log('[DEBUG] Initial channels and adapters:');
+  manager.listChannels().forEach(ch => {
+    const cobj = manager.channels.get(ch.id);
+    const port = (cobj && cobj.adapter && cobj.adapter.portPath) ? cobj.adapter.portPath : (cobj && cobj.adapter && cobj.adapter.host && cobj.adapter.port) ? `${cobj.adapter.host}:${cobj.adapter.port}` : (cobj && cobj.adapter && cobj.adapter.transport) || 'unknown';
+    console.log(`  - ${ch.id} -> adapter: ${port}`);
+  });
+} catch (e) {}
+
 // apply operational routes from digipeater settings (authoritative)
 if (digipeaterSettings) {
   applyDigipeaterSettingsToRuntime();
+}
+
+// Initialize standalone lookup handler (independent of BBS)
+try {
+  const lookupSettings = (digipeaterSettings && digipeaterSettings.lookup) || {};
+  lookupHandler = new LookupHandler(manager, {
+    enabled: lookupSettings.enabled !== false, // Default to enabled
+    callsign: lookupSettings.callsign || 'LOOKUP',
+    endpointTemplate: lookupSettings.endpointTemplate || 'https://callook.info/{CALL}/json',
+    timeoutMs: lookupSettings.timeoutMs || 5000,
+    cacheTtlMs: lookupSettings.cacheTtlMs || (10 * 60 * 1000)
+  });
+  console.log(`Lookup handler initialized (callsign: ${lookupSettings.callsign || 'LOOKUP'})`);
+} catch (e) {
+  console.error('Failed to initialize lookup handler:', e);
+}
+
+// Initialize beacon scheduler
+try {
+  beaconScheduler = new BeaconScheduler(manager);
+  beaconScheduler.updateSettings(digipeaterSettings);
+  console.log('Beacon scheduler initialized');
+} catch (e) {
+  console.error('Failed to initialize beacon scheduler:', e);
 }
 
 // Simple REST API
@@ -456,9 +549,20 @@ const updateBBSSettings = (newSettings) => {
   
   // Update APRS message handler
   if (newSettings.enabled && bbsSettings.callsign) {
+    // Initialize message alert manager if not already done
+    if (!messageAlertManager) {
+      messageAlertManager = new MessageAlertManager(bbs, manager, {
+        enabled: true,
+        alertCallsign: bbsSettings.callsign.includes('-') ? bbsSettings.callsign : `${bbsSettings.callsign}-MSG`,
+        reminderIntervalHours: 4,
+        maxReminders: 10
+      });
+      console.log(`Message Alert Manager initialized for ${messageAlertManager.settings.alertCallsign}`);
+    }
+    
     if (!aprsMessageHandler) {
       const APRSMessageHandler = require('./lib/aprsMessageHandler');
-      aprsMessageHandler = new APRSMessageHandler(bbs, manager, bbsSettings);
+      aprsMessageHandler = new APRSMessageHandler(bbs, manager, bbsSettings, messageAlertManager);
       console.log(`BBS APRS handler initialized for ${bbsSettings.callsign}`);
     } else {
       aprsMessageHandler.updateSettings(bbsSettings);
@@ -468,14 +572,40 @@ const updateBBSSettings = (newSettings) => {
     if (!bbsSessionManager) {
       const allowed = Array.isArray(bbsSettings.channels) ? bbsSettings.channels : [];
       const frameDelayMs = bbsSettings.frameDelayMs || 0;
-      bbsSessionManager = new BBSSessionManager(manager, bbsSettings.callsign, path.join(__dirname, 'data', 'bbsUsers.json'), { allowedChannels: allowed, frameDelayMs });
+      bbsSessionManager = new BBSSessionManager(
+        manager, 
+        bbsSettings.callsign, 
+        path.join(__dirname, 'data', 'bbsUsers.json'), 
+        { allowedChannels: allowed, frameDelayMs },
+        bbs, // Pass BBS instance
+        messageAlertManager // Pass message alert manager
+      );
       console.log(`BBS connected-mode handler initialized for ${bbsSettings.callsign}${frameDelayMs > 0 ? ` (frame delay: ${frameDelayMs}ms)` : ''}`);
+      
+      // Set up frame handler for BBS session manager
+      manager.on('frame', (event) => {
+        if (bbsSessionManager) {
+          try {
+            const frameBuffer = Buffer.from(event.raw, 'hex');
+            bbsSessionManager.onFrame(frameBuffer, event.channel);
+          } catch (err) {
+            console.error('Error processing frame in BBS session manager:', err);
+          }
+        }
+      });
     }
   } else if (aprsMessageHandler) {
     aprsMessageHandler.updateSettings(bbsSettings);
     console.log('BBS APRS handler disabled');
   }
 };
+
+// Initialize BBS system at startup
+try {
+  updateBBSSettings(bbsSettings);
+} catch (e) {
+  console.error('Failed to initialize BBS system:', e);
+}
 
 // Shared dependencies for routes
 const dependencies = {
@@ -493,8 +623,13 @@ const dependencies = {
   formatCallsign,
   ensureIgate,
   igate: () => igate, // Function to get current igate
-  weatherAlerts
+  weatherAlerts,
+  beaconScheduler: () => beaconScheduler, // Function to get current beacon scheduler
+  messageAlertManager: () => messageAlertManager // Function to get current alert manager
 };
+
+// expose winlink manager instance (may be null until initialized)
+dependencies.winlinkManager = winlinkManager;
 
 // expose lastHeard via dependencies
 dependencies.lastHeard = lastHeard;
@@ -518,6 +653,15 @@ app.use('/api', hardwareRoutes(dependencies));
 app.use('/api/igate', igateRoutes({...dependencies, igate}));
 app.use('/api', systemRoutes(dependencies));
 app.use('/api/digipeater', digipeaterRoutes(dependencies));
+// Winlink routes
+try { app.use('/api', require('./routes/winlink')(dependencies)); } catch (e) { console.error('Failed to mount winlink routes', e); }
+// Backbone routes
+try { 
+  const backboneRoutes = require('./routes/backbone');
+  app.use('/api', backboneRoutes({...dependencies, backboneManager})); 
+} catch (e) { 
+  console.error('Failed to mount backbone routes', e); 
+}
 
 // Expose current digipeaterSettings to route handlers that access req.app.locals
 app.locals.digipeaterSettings = digipeaterSettings;
@@ -526,6 +670,15 @@ app.locals.digipeaterSettings = digipeaterSettings;
 wss.on('connection', (ws) => {
   // send current channels
   ws.send(JSON.stringify({ type: 'channels', data: manager.listChannels() }));
+  
+  // send backbone status if available
+  try {
+    if (backboneManager && backboneManager.enabled) {
+      const backboneStatus = backboneManager.getStatus();
+      ws.send(JSON.stringify({ type: 'backbone-status', data: backboneStatus }));
+    }
+  } catch (e) { /* ignore */ }
+  
   const onFrame = (event) => {
     let parsed = null;
     try { parsed = parseAx25Frame(Buffer.from(event.raw, 'hex')); } catch (e) { /* ignore */ }
@@ -581,6 +734,12 @@ function shutdown(reason) {
     });
   } catch (e) { /* ignore */ }
   try { if (igate) { igate.stop && igate.stop(); } } catch (e) {}
+  try { 
+    if (backboneManager && backboneManager.enabled) { 
+      console.log('Shutting down backbone...');
+      backboneManager.shutdown().catch(e => console.error('Backbone shutdown error:', e)); 
+    } 
+  } catch (e) { console.error('Backbone shutdown error:', e); }
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
@@ -609,6 +768,15 @@ try {
           }
         });
       }
+            // Debug: dump channel -> adapter port information
+            try {
+              console.log('[DEBUG] Configured channels and adapters:');
+              manager.listChannels().forEach(ch => {
+                const cobj = manager.channels.get(ch.id);
+                const port = (cobj && cobj.adapter && cobj.adapter.portPath) ? cobj.adapter.portPath : (cobj && cobj.adapter && cobj.adapter.transport) || 'unknown';
+                console.log(`  - ${ch.id} -> adapter port/transport: ${port}`);
+              });
+            } catch (e) {}
       // Reload operational routes from digipeaterSettings (authoritative)
       try {
         if (digipeaterSettings) {
@@ -620,19 +788,15 @@ try {
   });
 } catch (e) { /* ignore watchers on unsupported platforms */ }
 
-// Initialize APRS message handler for BBS if enabled
-if (bbsSettings.enabled && bbsSettings.callsign) {
-  aprsMessageHandler = new APRSMessageHandler(bbs, manager, bbsSettings);
-  console.log(`BBS APRS handler initialized for ${bbsSettings.callsign}`);
-  // also start connected-mode session handler
-  const allowed = Array.isArray(bbsSettings.channels) ? bbsSettings.channels : [];
-  const frameDelayMs = bbsSettings.frameDelayMs || 0;
-  bbsSessionManager = new BBSSessionManager(manager, bbsSettings.callsign, path.join(__dirname, 'data', 'bbsUsers.json'), { allowedChannels: allowed, frameDelayMs });
-  console.log(`BBS connected-mode handler initialized for ${bbsSettings.callsign}${frameDelayMs > 0 ? ` (frame delay: ${frameDelayMs}ms)` : ''}`);
-}
+// Cleanup intervals
+setInterval(() => {
+  if (messageAlertManager) {
+    messageAlertManager.cleanup();
+  }
+}, 60 * 60 * 1000); // Every hour
 
-// Periodic cleanup for APRS handler and BBS
-aprsCleanupInterval = setInterval(() => {
+// APRS message cleanup
+setInterval(() => {
   if (aprsMessageHandler) {
     aprsMessageHandler.cleanup();
   }

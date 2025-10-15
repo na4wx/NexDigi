@@ -192,11 +192,23 @@ class ChannelManager extends EventEmitter {
   sendFrame(channelId, buf) {
     const ch = this.channels.get(channelId);
     if (!ch) return false;
+    
+    // Check if channel is disabled
+    if (ch.mode === 'disabled') {
+      if (CM_VERBOSE) console.log(`sendFrame: Channel ${channelId} is disabled, not transmitting`);
+      return false;
+    }
+    
     // Decide whether to KISS-wrap before sending to serial adapters. We prefer raw AX.25
     // on serial, but some TNCs use KISS over serial — detect that automatically or allow
     // forcing via channel.options.forceKissOnSerial.
     try {
       const adapter = ch.adapter;
+      // Debug: log control byte and adapter type for outgoing frames
+      try {
+        const parsedDebug = parseAx25Frame(buf);
+        console.log(`[ChannelManager] -> Sending frame on ${channelId}: control=0x${parsedDebug.control.toString(16)}, adapter=${adapter && (adapter.isSerial ? 'serial' : adapter.transport || 'unknown')}`);
+      } catch (e) {}
       const forceKiss = (ch.options && ch.options.forceKissOnSerial) || false;
       const observedKiss = adapter && !!adapter._observedKiss;
       if (adapter && adapter.isSerial && (forceKiss || observedKiss)) {
@@ -358,10 +370,17 @@ class ChannelManager extends EventEmitter {
   const entryRaw = this.seen.get(keyRaw) || { ts: nowRaw, seen: new Set() };
   if (nowRaw - entryRaw.ts > this.SEEN_TTL) { entryRaw.ts = nowRaw; entryRaw.seen = new Set(); }
         for (const targetId of routeTargetsConfigured) {
+          // Never forward raw frames back to the same originating channel — this
+          // prevents accidental self-routing loops when a route is misconfigured
+          // to point a channel at itself.
+          if (targetId === channelId) {
+            try { console.log(`[digipeat] skipping self-route forward for channel=${channelId}`); } catch (e) {}
+            continue;
+          }
           if (entryRaw.seen.has(targetId)) continue;
           const target = this.channels.get(targetId);
           if (!target || !target.enabled) continue;
-          // Prevent sending back to origin unless explicitly routed
+          // Prevent sending back to origin unless explicitly allowed by manager.allowSelfDigipeat
           if (!this.allowSelfDigipeat && targetId === channelId) continue;
           try {
             this.sendFrame(targetId, frame);
@@ -448,6 +467,21 @@ class ChannelManager extends EventEmitter {
 
         // determine callsign for this channel (assumption: options.callsign or name or id)
         const targetCall = (target.options && target.options.callsign) || target.name || target.id;
+
+        // If this frame's destination is addressed to the digipeater's own callsign,
+        // do not digipeat it. This prevents messages sent directly to the digi being
+        // re-transmitted out by that digipeater.
+        try {
+          const destAddr = parsed && parsed.addresses && parsed.addresses[0];
+          if (destAddr && destAddr.callsign) {
+            const destBase = _callsignBase(String(destAddr.callsign || '')) || '';
+            const tgtBase = _callsignBase(String(targetCall || '')) || '';
+            if (String(destBase).toUpperCase() === String(tgtBase).toUpperCase()) {
+              // Skip servicing frames whose destination is the digipeater itself
+              return;
+            }
+          }
+        } catch (e) {}
         if (!targetCall) return;
 
         // Debug: log target evaluation when verbose
@@ -686,8 +720,15 @@ class ChannelManager extends EventEmitter {
 
       const frame = Buffer.concat([header, control, pid, payloadBuf]);
 
+      // Debug: log the payload text and frame hex for troubleshooting
+      try {
+        const payloadText = payloadBuf.toString('utf8');
+        console.log(`sendAPRSMessage: payloadText=${JSON.stringify(payloadText)}`);
+      } catch (e) {}
+      try { console.log(`sendAPRSMessage: frameHex=${frame.toString('hex').slice(0,512)}`); } catch (e) {}
+
       // Send the frame
-  const success = this.sendFrame(channel, frame);
+      const success = this.sendFrame(channel, frame);
       if (success) {
         console.log(`sendAPRSMessage: Sent message from ${from} to ${to} via ${channel}`);
       } else {

@@ -10,7 +10,7 @@ module.exports = (dependencies) => {
   });
 
   router.post('/settings', (req, res) => {
-    const { enabled, channels, routes, nwsAlerts, metricsThresholds, metricsCheckIntervalSec } = req.body;
+    const { enabled, coordinates, channels, routes, nwsAlerts, metricsThresholds, metricsCheckIntervalSec } = req.body;
     console.log('[DEBUG] POST /api/digipeater/settings - body:', JSON.stringify(req.body));
     try {
       // ensure nwsAlerts is an object and has repeatExternalBulletins defaulted
@@ -22,11 +22,32 @@ module.exports = (dependencies) => {
       if (channels && typeof channels === 'object') {
         Object.keys(channels).forEach((cid) => {
           const s = channels[cid] || {};
+          console.log(`[DEBUG] Processing channel ${cid}:`, JSON.stringify(s, null, 2));
           const r = (typeof s.role === 'string') ? String(s.role).toLowerCase() : 'wide';
           const role = (r === 'fill-in' || r === 'fillin' || r === 'fill_in') ? 'fill-in' : 'wide';
           const mw = Number(s.maxWideN);
           const maxWideN = (Number.isFinite(mw) && mw > 0) ? Math.min(7, Math.max(1, mw)) : 2;
-          safeChannels[cid] = Object.assign({}, s, { role, maxWideN });
+          
+          // Validate beacon settings if present
+          let beacon = undefined;
+          if (s.beacon && typeof s.beacon === 'object') {
+            beacon = {
+              enabled: !!s.beacon.enabled,
+              intervalMinutes: Number.isFinite(Number(s.beacon.intervalMinutes)) && Number(s.beacon.intervalMinutes) > 0 ? 
+                Math.max(1, Math.min(1440, Number(s.beacon.intervalMinutes))) : 15,
+              message: typeof s.beacon.message === 'string' ? s.beacon.message.substring(0, 200) : '',
+              symbol: typeof s.beacon.symbol === 'string' ? s.beacon.symbol.substring(0, 1) || 'k' : 'k',
+              symbolTable: typeof s.beacon.symbolTable === 'string' ? s.beacon.symbolTable.substring(0, 2) || '/' : '/'
+            };
+          }
+          
+          // Preserve all channel properties and override specific validated ones
+          safeChannels[cid] = {
+            ...s,  // Copy all original properties
+            role,  // Override with validated role
+            maxWideN  // Override with validated maxWideN
+          };
+          if (beacon) safeChannels[cid].beacon = beacon;
         });
       }
 
@@ -38,6 +59,7 @@ module.exports = (dependencies) => {
 
       updateDigipeaterSettings({ 
         enabled: !!enabled, 
+        coordinates: coordinates || { latitude: '', longitude: '' },
         channels: safeChannels,
         routes: routes || [],
         nwsAlerts: nws,
@@ -300,6 +322,38 @@ module.exports = (dependencies) => {
       res.json({ ok: true });
     } catch (e) {
       console.error('clear active-alerts error', e);
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  // Beacon status and management
+  router.get('/beacons/status', (req, res) => {
+    try {
+      const beaconScheduler = dependencies.beaconScheduler && dependencies.beaconScheduler();
+      if (!beaconScheduler) return res.status(500).json({ error: 'beacon scheduler not available' });
+      const status = beaconScheduler.getBeaconStatus();
+      res.json(status);
+    } catch (e) {
+      console.error('beacon status error', e);
+      res.status(500).json({ error: 'internal error' });
+    }
+  });
+
+  // Trigger manual beacon (for testing)
+  router.post('/beacons/trigger/:channelId', (req, res) => {
+    try {
+      const { channelId } = req.params;
+      const beaconScheduler = dependencies.beaconScheduler && dependencies.beaconScheduler();
+      if (!beaconScheduler) return res.status(500).json({ error: 'beacon scheduler not available' });
+      
+      const success = beaconScheduler.triggerBeacon(channelId);
+      if (success) {
+        res.json({ ok: true, message: `Beacon triggered for ${channelId}` });
+      } else {
+        res.status(404).json({ error: `No beacon configured for channel ${channelId}` });
+      }
+    } catch (e) {
+      console.error('trigger beacon error', e);
       res.status(500).json({ error: 'internal error' });
     }
   });

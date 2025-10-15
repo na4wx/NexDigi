@@ -4,7 +4,7 @@ const { writeJsonAtomicSync } = require('./fileHelpers');
 const { parseAx25Frame, buildAx25Frame } = require('./ax25');
 
 class BBSSessionManager {
-  constructor(channelManager, callsign, storagePath, options = {}) {
+  constructor(channelManager, callsign, storagePath, options = {}, bbs = null, messageAlertManager = null) {
     this.channelManager = channelManager;
     this.callsign = String(callsign || '').toUpperCase();
     this.storagePath = storagePath || path.join(__dirname, '../data/bbsUsers.json');
@@ -13,6 +13,8 @@ class BBSSessionManager {
     this.users = this.loadUsers();
     this.lastPromptSent = new Map(); // debounce repeated prompts: sessionKey -> timestamp
     this.frameDelayMs = options.frameDelayMs || 0; // configurable delay between frames
+    this.bbs = bbs; // BBS instance
+    this.messageAlertManager = messageAlertManager; // Message alert manager
 
     this.channelManager.on('frame', (event) => this.onFrame(event));
   }
@@ -204,7 +206,9 @@ class BBSSessionManager {
       const nr = s.vR & 0x07;
       const pf = 0; // no poll/final
       const ctl = ((nr & 0x07) << 5) | ((pf & 0x01) << 4) | ((ns & 0x07) << 1) | 0x00;
-      const buf = buildAx25Frame({ dest: to, src: this.callsign, control: ctl, pid: 0xF0, payload: text });
+  // Ensure payload is a Buffer for consistent on-air encoding
+  const payloadBuf = (typeof text === 'string') ? Buffer.from(text, 'utf8') : (Buffer.isBuffer(text) ? text : Buffer.from(String(text)));
+  const buf = buildAx25Frame({ dest: to, src: this.callsign, control: ctl, pid: 0xF0, payload: payloadBuf });
       this.channelManager.sendFrame(channel, buf);
       // advance Ns
       s.vS = (s.vS + 1) % 8;
@@ -298,7 +302,7 @@ class BBSSessionManager {
       this.sendI(remoteCall, channel, 'Welcome back.\r\n');
     }
     // Show the main BBS prompt
-    this.sendI(remoteCall, channel, 'CMD? (type BYE to exit)\r\n');
+    this.sendI(remoteCall, channel, 'CMD (H = Help)\r\n');
   }
 
   handleInput(remoteCall, channel, text) {
@@ -372,8 +376,311 @@ class BBSSessionManager {
       return;
     }
 
-    // Echo line as placeholder
-    this.sendI(remoteCall, channel, `CMD? (type BYE to exit)\r\n`);
+    // Help/menu in connected mode: accept ?, H, h, or HELP
+    if (/^(\?|H|HELP)$/i.test(text.trim())) {
+      const header = 'BBS Menu:';
+      const lines = [
+        'L or LIST    - List recent bulletins',
+        'P or PERSONAL- List personal messages for you',
+        'R n          - Read message number n',
+        'S CALL TEXT  - Send message to callsign',
+        'M CALL       - Start composing message to callsign',
+        'H or ?       - Help / this menu',
+        'B or BYE     - Sign off (73)',
+        'Text         - Send text to post as a bulletin'
+      ];
+
+      try {
+        // Build a single payload containing the whole menu separated by CRLF
+        const single = header + '\r\n' + lines.join('\r\n') + '\r\n';
+        this.sendI(remoteCall, channel, single);
+      } catch (e) {
+        // Fallback: single-line prompt
+        this.sendI(remoteCall, channel, 'CMD (H = Help)\r\n');
+      }
+      return;
+    }
+
+    // List command - show recent bulletins
+    if (/^(L|LIST)$/i.test(text.trim())) {
+      this.listMessages(remoteCall, channel);
+      return;
+    }
+
+    // Personal command - show personal messages for this user
+    if (/^(P|PERSONAL)$/i.test(text.trim())) {
+      this.listPersonalMessages(remoteCall, channel);
+      return;
+    }
+
+    // Read command - read specific message
+    if (/^R\s+(\d+)$/i.test(text.trim())) {
+      const msgNum = parseInt(text.trim().split(/\s+/)[1]);
+      this.readMessage(remoteCall, channel, msgNum);
+      return;
+    }
+
+    // Send command - send message to another station
+    if (/^S\s+([A-Z0-9\-]+)\s+(.+)$/i.test(text.trim())) {
+      const match = text.trim().match(/^S\s+([A-Z0-9\-]+)\s+(.+)$/i);
+      const recipient = match[1].toUpperCase();
+      const message = match[2];
+      this.sendMessageToStation(remoteCall, channel, recipient, message);
+      return;
+    }
+
+    // Message command - start composing message
+    if (/^M\s+([A-Z0-9\-]+)$/i.test(text.trim())) {
+      const match = text.trim().match(/^M\s+([A-Z0-9\-]+)$/i);
+      const recipient = match[1].toUpperCase();
+      this.sessions.set(key, { 
+        state: 'composing', 
+        remote: remoteCall, 
+        channel, 
+        recipient: recipient,
+        message: '' 
+      });
+      this.sendI(remoteCall, channel, `Composing message to ${recipient}.\r\nEnter message (end with . on new line):\r\n`);
+      return;
+    }
+
+    // Handle message composition
+    if (sess.state === 'composing') {
+      if (text.trim() === '.') {
+        // End of message
+        const msg = sess.message.trim();
+        if (msg) {
+          this.sendMessageToStation(remoteCall, channel, sess.recipient, msg, {
+            subject: sess.subject || 'BBS Message',
+            replyTo: sess.replyTo || null
+          });
+        } else {
+          this.sendI(remoteCall, channel, 'Message cancelled (empty).\r\n');
+        }
+        this.sessions.set(key, { state: 'connected', remote: remoteCall, channel });
+        this.sendI(remoteCall, channel, 'CMD (H = Help)\r\n');
+        return;
+      } else {
+        // Add line to message
+        sess.message += (sess.message ? '\r\n' : '') + text;
+        this.sessions.set(key, sess);
+        return; // Don't send prompt while composing
+      }
+    }
+
+    // Handle post-read options (after reading a message)
+    if (sess.state === 'post-read') {
+      const input = text.trim().toUpperCase();
+      
+      if (input === 'Y' || input === 'REPLY') {
+        // Start replying to the message
+        const originalMessage = sess.lastReadMessage;
+        const replySubject = originalMessage.subject && !originalMessage.subject.startsWith('Re: ') 
+          ? `Re: ${originalMessage.subject}` 
+          : (originalMessage.subject || 'Re: Your message');
+        
+        this.sessions.set(key, { 
+          state: 'composing', 
+          remote: remoteCall, 
+          channel, 
+          recipient: originalMessage.sender,
+          message: '',
+          replyTo: sess.lastReadMessageNumber,
+          subject: replySubject
+        });
+        this.sendI(remoteCall, channel, `Replying to ${originalMessage.sender}.\r\nSubject: ${replySubject}\r\nEnter message (end with . on new line):\r\n`);
+        return;
+        
+      } else if (input === 'D' || input === 'DELETE') {
+        // Delete the message
+        try {
+          this.bbs.deleteMessage(sess.lastReadMessageNumber);
+          this.sendI(remoteCall, channel, `Message ${sess.lastReadMessageNumber} deleted.\r\n`);
+        } catch (e) {
+          this.sendI(remoteCall, channel, 'Error deleting message.\r\n');
+        }
+        this.sessions.set(key, { state: 'connected', remote: remoteCall, channel });
+        this.sendI(remoteCall, channel, 'CMD (H = Help)\r\n');
+        return;
+        
+      } else {
+        // Any other input (including empty) returns to main menu
+        this.sessions.set(key, { state: 'connected', remote: remoteCall, channel });
+        this.sendI(remoteCall, channel, 'CMD (H = Help)\r\n');
+        return;
+      }
+    }
+
+    // Echo line as placeholder (unknown command)
+    this.sendI(remoteCall, channel, `CMD (H = Help)\r\n`);
+  }
+
+  /**
+   * List recent bulletin messages
+   */
+  listMessages(remoteCall, channel) {
+    try {
+      if (!this.bbs) {
+        this.sendI(remoteCall, channel, 'BBS not available.\r\nCMD (H = Help)\r\n');
+        return;
+      }
+
+      const messages = this.bbs.getMessages({ category: 'B' }).slice(0, 10);
+      
+      if (messages.length === 0) {
+        this.sendI(remoteCall, channel, 'No bulletin messages available.\r\n');
+        return;
+      }
+
+      let response = 'Recent Bulletins:\r\n';
+      messages.forEach(msg => {
+        const date = new Date(msg.timestamp).toLocaleDateString();
+        response += `${msg.messageNumber}: ${msg.sender} - ${msg.subject || 'No subject'} (${date})\r\n`;
+      });
+      response += '\r\nCMD (H = Help)\r\n';
+      
+      this.sendI(remoteCall, channel, response);
+    } catch (e) {
+      this.sendI(remoteCall, channel, 'Error listing messages.\r\nCMD (H = Help)\r\n');
+    }
+  }
+
+  /**
+   * List personal messages for the connected user
+   */
+  listPersonalMessages(remoteCall, channel) {
+    try {
+      if (!this.bbs) {
+        this.sendI(remoteCall, channel, 'BBS not available.\r\nCMD (H = Help)\r\n');
+        return;
+      }
+
+      // Get base callsign (without SSID) to find all messages to any SSID of this callsign
+      const { _callsignBase } = require('./ax25');
+      const baseCallsign = _callsignBase(String(remoteCall || '').toUpperCase());
+      
+      // Get all personal messages and filter for this base callsign
+      const allPersonalMessages = this.bbs.getMessages({ category: 'P' });
+      const messages = allPersonalMessages.filter(msg => {
+        const recipientBase = _callsignBase(msg.recipient);
+        return recipientBase === baseCallsign;
+      });
+      
+      if (messages.length === 0) {
+        this.sendI(remoteCall, channel, `No personal messages for ${baseCallsign}*.\r\n`);
+        return;
+      }
+
+      let response = `Personal Messages for ${baseCallsign}* (all SSIDs):\r\n`;
+      messages.forEach(msg => {
+        const date = new Date(msg.timestamp).toLocaleDateString();
+        const readStatus = msg.read ? 'READ' : 'NEW';
+        response += `${msg.messageNumber}: To ${msg.recipient} From ${msg.sender} - ${msg.subject || 'No subject'} (${date}) [${readStatus}]\r\n`;
+      });
+      response += '\r\nUse "R n" to read message number n\r\n';
+      response += 'CMD (H = Help)\r\n';
+      
+      this.sendI(remoteCall, channel, response);
+    } catch (e) {
+      this.sendI(remoteCall, channel, 'Error listing personal messages.\r\nCMD (H = Help)\r\n');
+    }
+  }
+
+  /**
+   * Read a specific message
+   */
+  readMessage(remoteCall, channel, messageNumber) {
+    try {
+      if (!this.bbs) {
+        this.sendI(remoteCall, channel, 'BBS not available.\r\nCMD (H = Help)\r\n');
+        return;
+      }
+
+      const messages = this.bbs.getMessages({ messageNumber });
+      const message = messages.find(m => m.messageNumber === messageNumber);
+      
+      if (!message) {
+        this.sendI(remoteCall, channel, `Message ${messageNumber} not found.\r\nCMD (H = Help)\r\n`);
+        return;
+      }
+
+      // Mark as read
+      this.bbs.markAsRead(messageNumber, remoteCall);
+
+      const date = new Date(message.timestamp).toLocaleDateString();
+      let response = `Message ${messageNumber}:\r\n`;
+      response += `From: ${message.sender}\r\n`;
+      response += `Date: ${date}\r\n`;
+      response += `Subject: ${message.subject || 'No subject'}\r\n`;
+      response += `\r\n${message.content}\r\n\r\n`;
+      
+      // Present post-read options
+      response += 'Options:\r\n';
+      response += 'Y - Reply to this message\r\n';
+      response += 'D - Delete this message\r\n';
+      response += 'Enter - Return to main menu\r\n';
+      
+      this.sendI(remoteCall, channel, response);
+      
+      // Set session state to handle post-read options
+      const rc = this._parseCallString(remoteCall);
+      const key = this._makeSessionKey(channel, rc);
+      const sess = this.sessions.get(key) || { state: 'connected', remote: remoteCall, channel };
+      this.sessions.set(key, { 
+        ...sess, 
+        state: 'post-read', 
+        lastReadMessage: message,
+        lastReadMessageNumber: messageNumber
+      });
+      
+    } catch (e) {
+      this.sendI(remoteCall, channel, 'Error reading message.\r\nCMD (H = Help)\r\n');
+    }
+  }
+
+  /**
+   * Send a message to another station
+   */
+  sendMessageToStation(sender, channel, recipient, messageText, options = {}) {
+    try {
+      if (!this.bbs) {
+        this.sendI(sender, channel, 'BBS not available.\r\nCMD (H = Help)\r\n');
+        return;
+      }
+      
+      // Store the message
+      const message = this.bbs.addMessage(sender, recipient, messageText, {
+        category: 'P',
+        subject: options.subject || 'BBS Message',
+        priority: 'N',
+        replyTo: options.replyTo || null
+      });
+
+      this.sendI(sender, channel, `Message sent to ${recipient} (stored as #${message.messageNumber}).\r\n`);
+      
+      // Try to alert the recipient via the message alert manager
+      if (this.messageAlertManager) {
+        try {
+          this.messageAlertManager.alertNewMessage(recipient, sender, channel);
+          this.sendI(sender, channel, `${recipient} has been alerted.\r\n`);
+        } catch (e) {
+          this.sendI(sender, channel, `Message stored. ${recipient} will see it when they check messages.\r\n`);
+        }
+      } else {
+        this.sendI(sender, channel, `Message stored. ${recipient} will see it when they check messages.\r\n`);
+      }
+      
+      this.sendI(sender, channel, '\r\n');
+    } catch (e) {
+      this.sendI(sender, channel, 'Error sending message.\r\nCMD (H = Help)\r\n');
+    }
+  }
+
+  /**
+   * Get message alert manager (if available)
+   */
+  getMessageAlertManager() {
+    return this.messageAlertManager;
   }
 }
 
