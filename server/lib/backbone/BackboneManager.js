@@ -11,6 +11,10 @@ const path = require('path');
 const RFTransport = require('./RFTransport');
 const InternetTransport = require('./InternetTransport');
 const { PacketFormat, PacketType, PacketFlags, Priority } = require('./PacketFormat');
+const Heartbeat = require('./Heartbeat');
+const NeighborTable = require('./NeighborTable');
+const TopologyGraph = require('./TopologyGraph');
+const RoutingEngine = require('./RoutingEngine');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '../../data/backboneSettings.json');
 
@@ -22,14 +26,19 @@ class BackboneManager extends EventEmitter {
     this.config = null;
     this.transports = new Map(); // transportId -> Transport instance
     this.routingTable = new Map(); // destination -> { nextHop, cost, transport, lastUpdate }
-    this.neighbors = new Map(); // callsign -> { transports: [], lastSeen, services }
+    this.neighborTable = null; // Will be initialized in initialize()
+    this.neighbors = new Map(); // DEPRECATED: Keeping for backward compatibility, use neighborTable instead
     this.services = new Map(); // serviceType -> Set of callsigns offering service
     this.messageCache = new Map(); // messageId -> { timestamp, delivered }
     this.localCallsign = '';
     this.enabled = false;
+    this.heartbeat = null; // Will be initialized in initialize()
+    this.topologyGraph = null; // Will be initialized in initialize()
+    this.routingEngine = null; // Will be initialized in initialize()
 
     // Periodic maintenance
     this.maintenanceInterval = null;
+    this.routingUpdateTimer = null;
   }
 
   /**
@@ -49,6 +58,62 @@ class BackboneManager extends EventEmitter {
 
     this.enabled = true;
     this.localCallsign = this.config.localCallsign;
+
+    // Initialize neighbor table
+    this.neighborTable = new NeighborTable({
+      timeout: this.config.neighborTimeout || 900000, // 15 minutes default
+      cleanupInterval: this.config.neighborCleanupInterval || 60000 // 1 minute default
+    });
+
+    // Listen to neighbor events
+    this.neighborTable.on('neighbor-added', (callsign, neighbor) => {
+      console.log(`[BackboneManager] Neighbor added: ${callsign}`);
+      this.emit('neighbor-added', callsign, neighbor);
+      // Trigger routing table update
+      this._triggerRoutingUpdate();
+    });
+
+    this.neighborTable.on('neighbor-removed', (callsign, neighbor, reason) => {
+      console.log(`[BackboneManager] Neighbor removed: ${callsign} (${reason})`);
+      this.emit('neighbor-removed', callsign, neighbor);
+      // Trigger routing table update
+      this._triggerRoutingUpdate();
+    });
+
+    this.neighborTable.on('neighbor-updated', (callsign, neighbor) => {
+      this.emit('neighbor-updated', callsign, neighbor);
+    });
+
+    // Initialize heartbeat manager
+    this.heartbeat = new Heartbeat({
+      nodeId: this.localCallsign,
+      interval: this.config.heartbeatInterval || 300000, // 5 minutes default
+      timeout: this.config.neighborTimeout || 900000, // 15 minutes default
+      getServices: () => this.config.services || [],
+      getMetrics: () => this._collectMetrics()
+    });
+
+    // Listen to heartbeat events
+    this.heartbeat.on('heartbeat', (heartbeatData) => {
+      this._broadcastHeartbeat(heartbeatData);
+    });
+
+    // Initialize topology graph
+    this.topologyGraph = new TopologyGraph();
+    console.log('[BackboneManager] Topology graph initialized');
+
+    // Initialize routing engine
+    this.routingEngine = new RoutingEngine({
+      localCallsign: this.localCallsign,
+      policies: this.config.routing?.policies || {}
+    });
+
+    this.routingEngine.on('routes-updated', (routingTable) => {
+      console.log(`[BackboneManager] Routing table updated: ${routingTable.size} routes`);
+      this.emit('routes-updated', routingTable);
+    });
+
+    console.log('[BackboneManager] Routing engine initialized');
 
     // Initialize transports
     await this._initializeTransports();
@@ -251,6 +316,10 @@ class BackboneManager extends EventEmitter {
         this._handleServiceReply(packet, transportId);
         break;
       
+      case PacketType.KEEPALIVE:
+        this._handleKeepalive(packet, transportId);
+        break;
+      
       case PacketType.NEIGHBOR_LIST:
         this._handleNeighborList(packet, transportId);
         break;
@@ -304,12 +373,73 @@ class BackboneManager extends EventEmitter {
   }
 
   /**
-   * Handle Link State Advertisement
+   * Handle LSA packet
    * @private
    */
   _handleLSA(packet, transportId) {
     // TODO: Implement link-state routing (Phase 2)
     console.log(`[BackboneManager] LSA from ${packet.source} - routing not yet implemented`);
+  }
+
+  /**
+   * Handle KEEPALIVE packet (heartbeat)
+   * @private
+   */
+  _handleKeepalive(packet, transportId) {
+    const { source, payload } = packet;
+    
+    try {
+      const heartbeatData = JSON.parse(payload.toString('utf8'));
+      
+      // Process heartbeat using Heartbeat module
+      const neighborInfo = this.heartbeat.processHeartbeat(heartbeatData, transportId);
+      
+      if (!neighborInfo) {
+        return; // Invalid heartbeat
+      }
+
+      // Update neighbor table (new system)
+      if (this.neighborTable) {
+        this.neighborTable.update(source, transportId, {
+          services: heartbeatData.services || [],
+          capabilities: heartbeatData.capabilities || {},
+          protocolVersion: heartbeatData.protocolVersion || '1.0.0',
+          sequence: heartbeatData.sequence,
+          metrics: heartbeatData.metrics || {},
+          viaHub: false // Direct heartbeat, not via hub
+        });
+      }
+
+      // Update old neighbor map for backward compatibility
+      let neighbor = this.neighbors.get(source);
+      if (!neighbor) {
+        neighbor = {
+          transports: [],
+          lastSeen: Date.now(),
+          services: []
+        };
+        this.neighbors.set(source, neighbor);
+      }
+
+      if (!neighbor.transports.includes(transportId)) {
+        neighbor.transports.push(transportId);
+      }
+      neighbor.lastSeen = Date.now();
+      neighbor.services = heartbeatData.services || [];
+
+      // Update services map
+      for (const service of neighbor.services) {
+        if (!this.services.has(service)) {
+          this.services.set(service, new Set());
+        }
+        this.services.get(service).add(source);
+      }
+
+      console.log(`[BackboneManager] KEEPALIVE from ${source} via ${transportId} (seq: ${heartbeatData.sequence})`);
+
+    } catch (error) {
+      console.error(`[BackboneManager] Error handling KEEPALIVE from ${source}:`, error.message);
+    }
   }
 
   /**
@@ -497,6 +627,13 @@ class BackboneManager extends EventEmitter {
    * Select best transport for destination
    * @private
    */
+  /**
+   * Select best transport for destination
+   * @private
+   * @param {String} destination - Destination callsign
+   * @param {Object} options - Routing options
+   * @returns {Transport|null} Selected transport or null
+   */
   _selectTransport(destination, options = {}) {
     const availableTransports = Array.from(this.transports.values())
       .filter(t => t.isAvailable());
@@ -530,16 +667,28 @@ class BackboneManager extends EventEmitter {
       // Mesh mode continues to normal routing logic below
     }
 
-    // If only one transport available, use it
-    if (availableTransports.length === 1) {
-      return availableTransports[0];
+    // Use routing engine if available (Phase 3)
+    if (this.routingEngine && this.routingEngine.isReachable(destination)) {
+      const route = this.routingEngine.selectRoute(destination, options);
+      
+      if (route) {
+        // Get transport for next hop
+        const nextHop = route.nextHop;
+        const transportId = route.transport;
+        const transport = this.transports.get(transportId);
+        
+        if (transport && transport.isAvailable()) {
+          console.log(`[BackboneManager] Routing: ${destination} via ${nextHop} on ${transportId} (cost: ${route.cost})`);
+          return transport;
+        }
+      }
     }
 
-    // Check if destination is a neighbor
+    // Fallback to simple neighbor lookup (backward compatibility)
     const neighbor = this.neighbors.get(destination);
     if (neighbor) {
       // Prefer Internet if configured
-      if (this.config.routing.preferInternet) {
+      if (this.config.routing?.preferInternet) {
         if (internet && internet.isAvailable() && neighbor.transports.includes('internet')) {
           return internet;
         }
@@ -652,6 +801,145 @@ class BackboneManager extends EventEmitter {
   }
 
   /**
+   * Broadcast heartbeat to all transports
+   * @private
+   */
+  _broadcastHeartbeat(heartbeatData) {
+    try {
+      const packet = {
+        source: this.localCallsign,
+        destination: 'BROADCAST',
+        type: PacketType.KEEPALIVE,
+        flags: PacketFlags.NONE,
+        priority: Priority.LOW,
+        ttl: 1, // Heartbeats are not forwarded
+        payload: Buffer.from(JSON.stringify(heartbeatData), 'utf8')
+      };
+
+      // Broadcast to all available transports
+      for (const [transportId, transport] of this.transports) {
+        if (transport.isAvailable()) {
+          transport.broadcast(PacketFormat.encode(packet))
+            .catch(err => {
+              console.error(`[BackboneManager] Failed to broadcast heartbeat on ${transportId}:`, err.message);
+            });
+        }
+      }
+    } catch (error) {
+      console.error('[BackboneManager] Error broadcasting heartbeat:', error);
+    }
+  }
+
+  /**
+   * Collect current metrics for heartbeat
+   * @private
+   */
+  _collectMetrics() {
+    const metrics = {};
+
+    for (const [transportId, transport] of this.transports) {
+      if (transport.isAvailable() && transport.metrics) {
+        metrics[transportId] = {
+          packetsSent: transport.metrics.packetsSent || 0,
+          packetsReceived: transport.metrics.packetsReceived || 0,
+          bytesSent: transport.metrics.bytesSent || 0,
+          bytesReceived: transport.metrics.bytesReceived || 0,
+          errors: transport.metrics.errors || 0
+        };
+      }
+    }
+
+    return metrics;
+  }
+
+  /**
+   * Trigger routing table update (placeholder for Phase 3)
+   * @private
+   */
+  /**
+   * Trigger routing table update
+   * @private
+   */
+  _triggerRoutingUpdate() {
+    if (!this.topologyGraph || !this.routingEngine) {
+      return;
+    }
+
+    // Update topology graph from neighbor table
+    this.topologyGraph.updateFromNeighborTable(this.localCallsign, this.neighborTable);
+
+    // Recalculate routes
+    const routes = this.routingEngine.calculateRoutes(this.topologyGraph);
+
+    // Update old routing table for backward compatibility
+    this.routingTable.clear();
+    for (const [dest, route] of routes) {
+      this.routingTable.set(dest, {
+        nextHop: route.nextHop,
+        cost: route.cost,
+        transport: route.transport,
+        lastUpdate: route.lastUpdate
+      });
+    }
+
+    console.log(`[BackboneManager] Routing update complete: ${routes.size} routes calculated`);
+  }
+
+  /**
+   * Collect metrics for heartbeat
+   * @private
+   * @returns {Object} Metrics object
+   */
+  _collectMetrics() {
+    const metrics = {};
+
+    // Collect metrics from each transport
+    for (const [id, transport] of this.transports) {
+      if (transport.connected) {
+        const transportMetrics = transport.getMetrics();
+        metrics[id] = {
+          packetsSent: transportMetrics.packetsSent || 0,
+          packetsReceived: transportMetrics.packetsReceived || 0,
+          bytesSent: transportMetrics.bytesSent || 0,
+          bytesReceived: transportMetrics.bytesReceived || 0,
+          errors: transportMetrics.errors || 0
+        };
+      }
+    }
+
+    return metrics;
+  }
+
+  /**
+   * Broadcast heartbeat on all transports
+   * @private
+   * @param {Object} heartbeatData - Heartbeat data to broadcast
+   */
+  async _broadcastHeartbeat(heartbeatData) {
+    const payload = Buffer.from(JSON.stringify(heartbeatData), 'utf8');
+
+    for (const [id, transport] of this.transports) {
+      if (!transport.connected || !transport.isAvailable()) {
+        continue;
+      }
+
+      try {
+        const packet = PacketFormat.create({
+          type: PacketType.KEEPALIVE,
+          source: this.localCallsign,
+          destination: '*', // Broadcast
+          payload: payload,
+          priority: Priority.LOW
+        });
+
+        await transport.broadcast(packet);
+      } catch (error) {
+        console.error(`[BackboneManager] Failed to broadcast heartbeat on ${id}:`, error.message);
+      }
+    }
+  }
+
+  /**
    * Start maintenance tasks
    * @private
    */
@@ -660,12 +948,30 @@ class BackboneManager extends EventEmitter {
       this._maintenance();
     }, 60000); // Every minute
 
+    // Start heartbeat broadcasts
+    if (this.heartbeat) {
+      this.heartbeat.start();
+      console.log('[BackboneManager] Heartbeat broadcasts started');
+    }
+
+    // Start neighbor table cleanup
+    if (this.neighborTable) {
+      this.neighborTable.startCleanup();
+    }
+
     // Start neighbor broadcast if we're a hub (server mode)
     const internet = this.transports.get('internet');
     if (internet && internet.mode === 'server') {
       console.log('[BackboneManager] Starting hub neighbor broadcast');
       internet.startNeighborBroadcast(this.localCallsign, 30000); // Broadcast every 30s
     }
+
+    // Start periodic routing updates
+    this.routingUpdateTimer = setInterval(() => {
+      this._triggerRoutingUpdate();
+    }, this.config.routingUpdateInterval || 60000); // Every minute by default
+
+    console.log('[BackboneManager] Periodic routing updates started');
   }
 
   /**
@@ -705,9 +1011,24 @@ class BackboneManager extends EventEmitter {
 
     console.log('[BackboneManager] Shutting down...');
 
+    // Stop heartbeat
+    if (this.heartbeat) {
+      this.heartbeat.stop();
+    }
+
+    // Stop neighbor table cleanup
+    if (this.neighborTable) {
+      this.neighborTable.stopCleanup();
+    }
+
     // Stop maintenance
     if (this.maintenanceInterval) {
       clearInterval(this.maintenanceInterval);
+    }
+
+    // Stop routing updates
+    if (this.routingUpdateTimer) {
+      clearInterval(this.routingUpdateTimer);
     }
 
     // Stop neighbor broadcasts if running
@@ -746,8 +1067,61 @@ class BackboneManager extends EventEmitter {
         lastSeenAgo: Date.now() - info.lastSeen
       })),
       services: {},
-      messageCache: this.messageCache.size
+      messageCache: this.messageCache.size,
+      heartbeat: null,
+      neighborTable: null,
+      topologyGraph: null,
+      routingEngine: null
     };
+
+    // Heartbeat status
+    if (this.heartbeat) {
+      status.heartbeat = {
+        running: this.heartbeat.running,
+        interval: this.heartbeat.interval,
+        sequence: this.heartbeat.sequence
+      };
+    }
+
+    // Neighbor table status (new system)
+    if (this.neighborTable) {
+      const stats = this.neighborTable.getStats();
+      status.neighborTable = {
+        total: stats.total,
+        direct: stats.direct,
+        viaHub: stats.viaHub,
+        rf: stats.rf,
+        internet: stats.internet,
+        services: stats.services,
+        neighbors: this.neighborTable.toArray() // Detailed list
+      };
+    }
+
+    // Topology graph status
+    if (this.topologyGraph) {
+      const graphStats = this.topologyGraph.getStats();
+      status.topologyGraph = {
+        nodes: graphStats.nodes,
+        edges: graphStats.edges,
+        avgCost: graphStats.avgCost,
+        transports: graphStats.transports
+      };
+    }
+
+    // Routing engine status
+    if (this.routingEngine) {
+      const routeStats = this.routingEngine.getStats();
+      status.routingEngine = {
+        routes: routeStats.routes,
+        avgCost: routeStats.avgCost,
+        avgHops: routeStats.avgHops,
+        minHops: routeStats.minHops,
+        maxHops: routeStats.maxHops,
+        transports: routeStats.transports,
+        lastCalculation: routeStats.lastCalculation,
+        routingTable: this.routingEngine.toArray() // Detailed routes
+      };
+    }
 
     // Transport status
     for (const [id, transport] of this.transports) {
