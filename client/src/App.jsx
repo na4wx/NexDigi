@@ -13,8 +13,8 @@ import LastHeard from './pages/LastHeard'
 // BBS UI is available and conditionally shown based on server settings
 import BBS from './pages/BBS'
 import BBSSettings from './pages/BBSSettings'
-import Backbone from './pages/Backbone'
-import BackboneSettings from './pages/BackboneSettings'
+import NexNet from './pages/NexNet'
+import NexNetSettings from './pages/NexNetSettings'
 import axios from 'axios'
 
 export default function App() {
@@ -194,7 +194,7 @@ export default function App() {
             <Button color="inherit" onClick={() => setPage('lastheard')}>Last Heard</Button>
             {bbsEnabled && <Button color="inherit" onClick={() => setPage('bbs')}>BBS</Button>}
             {alertsEnabled && <Button color="inherit" onClick={() => setPage('alerts')}>Alerts</Button>}
-            <Button color="inherit" onClick={() => setPage('backbone')}>Backbone</Button>
+            <Button color="inherit" onClick={() => setPage('nexnet')}>NexNet</Button>
             <Button color="inherit" onClick={() => setPage('settings')}>Settings</Button>
           </Toolbar>
         </AppBar>
@@ -363,8 +363,8 @@ export default function App() {
           {page === 'alerts' && <ActiveAlerts />}
           {page === 'bbs' && <BBS />}
           {page === 'bbs-settings' && <BBSSettings />}
-          {page === 'backbone' && <Backbone setPage={setPage} />}
-          {page === 'backbone-settings' && <BackboneSettings />}
+          {page === 'nexnet' && <NexNet setPage={setPage} />}
+          {page === 'nexnet-settings' && <NexNetSettings />}
         </Container>
       </Box>
 

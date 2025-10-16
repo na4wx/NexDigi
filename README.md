@@ -1,32 +1,237 @@
-# NexDigi — modern multi‑channel Packet Toolkit and Digipeater
+# NexDigi — Modern Multi-Channel Packet Radio Toolkit
 
-NexDigi is a modern APRS digipeater with multi‑channel support, cross‑digipeating, duplex operation, and built‑in weather alerts and weather‑alert digipeating, specific to your chosen SAME codes.
+NexDigi is a comprehensive packet radio platform featuring advanced APRS digipeating, mesh networking (NexNet), BBS, Winlink gateway capabilities, and intelligent traffic management with enterprise-grade features.
 
-## Highlights
+## 🌟 Feature Tree
 
-- Multi‑channel radios/adapters: Serial KISS, KISS‑TCP (e.g., SoundModem), and a Mock adapter for testing
-- Cross‑digipeating and routing with WIDEn‑N handling, H‑bit marking, and loop prevention
-- Duplex‑style operation per channel (independent RX/TX behavior and routing)
-- IGate to APRS‑IS with global and per‑channel toggles
-- Weather alerts: polls NWS, matches your SAME codes, sends concise APRS bulletins to ALLWX (properly padded), optionally repeats external weather bulletins, and persists active alerts
-- Operator‑friendly UI: live frames, per‑channel actions (Edit, Beacon, Probe, Reconnect, Delete), status at a glance
-- Fast setup: one‑command installers (systemd service on Debian/Ubuntu; Windows service script)
+### 📡 Core Radio & Channel Management
+- **Multi-Transport Support**
+  - Serial KISS (TNC via USB/Serial)
+  - KISS-TCP (Direwolf, SoundModem)
+  - AGW Protocol (Soundmodem, AGWPE)
+  - Mock adapter (testing without hardware)
+- **Channel Operations**
+  - Multi-channel simultaneous operation
+  - Per-channel configuration & routing
+  - Cross-band digipeating
+  - Duplex-style independent RX/TX
+  - Hot-reload configuration
+  - Channel health monitoring
 
-## Quick start (development)
+### 🔄 APRS Digipeater
+- **Path Processing**
+  - WIDEn-N decrementing with H-bit marking
+  - WIDE1-1 fill-in digipeater mode
+  - Configurable max WIDE-N per channel
+  - Loop prevention & duplicate detection
+  - Smart seen-cache with TTL
+- **Traffic Management**
+  - Cross-channel routing
+  - Rate limiting & metrics
+  - Blocked frame detection
+  - Performance monitoring
 
-Prereqs: Node.js 18+.
+### 🌐 IGate (APRS-IS Gateway)
+- **Connectivity**
+  - Bidirectional APRS-IS connection
+  - TLS/SSL support
+  - Automatic reconnection
+  - Filter configuration
+- **Forwarding**
+  - RF → APRS-IS with position validation
+  - APRS-IS → RF with rate limiting
+  - Per-channel IGate control
+  - Message routing
 
-```powershell
+### ☁️ Weather Integration
+- **NWS Alerts**
+  - Real-time NWS API polling
+  - SAME code filtering
+  - Automatic bulletin generation
+  - Active alert persistence
+  - Multi-alert handling
+- **Weather Digipeating**
+  - ALLWX bulletin formatting
+  - External bulletin repeating (optional)
+  - Product code parsing (TOR/SVR/FFW/WSW)
+  - Priority emergency alerts
+
+### 📮 Bulletin Board System (BBS)
+- **Message Management**
+  - Personal & bulletin messages
+  - Message threading & replies
+  - Read/unread tracking
+  - Message expiration
+  - User management
+- **Access Methods**
+  - APRS messaging (UI frames)
+  - Connected mode (AX.25)
+  - Multi-channel access
+  - Session management
+- **Message Alerts**
+  - Automatic notification beacons
+  - Configurable reminder intervals
+  - Per-user alert tracking
+  - Message count summaries
+
+### 📧 Winlink Gateway
+- **CMS Integration**
+  - Winlink CMS connection
+  - Message pickup & delivery
+  - Position reporting
+  - Channel status updates
+- **Operations**
+  - Automatic reconnection
+  - Configurable check intervals
+  - Multi-channel access
+  - Queue management
+
+### 🕸️ NexNet (Advanced Mesh Networking)
+- **Network Topology**
+  - Mesh mode (peer-to-peer)
+  - Hub mode (client aggregation)
+  - Client mode (connect to hub)
+  - Hybrid RF + Internet transport
+- **Intelligent Routing**
+  - Dynamic route discovery
+  - Multi-hop forwarding
+  - Path cost calculation
+  - Route preference (Internet/RF)
+- **Quality of Service (QoS)**
+  - 4-level priority queuing
+    - Emergency (TOR/SVR/FFW)
+    - High (bulletins/weather)
+    - Normal (standard traffic)
+    - Low (routine messages)
+  - Token bucket bandwidth limiting
+  - Automatic traffic shaping
+  - Queue size configuration
+- **Load Balancing**
+  - Weighted route selection
+  - Round-robin distribution
+  - Least-loaded algorithm
+  - Automatic failover (threshold-based)
+  - Route health tracking
+- **Mesh Self-Healing**
+  - Link State Advertisements (LSA)
+  - Dijkstra shortest path
+  - Automatic route discovery
+  - Link failure detection
+  - Topology synchronization
+- **Security & Authentication**
+  - Ed25519 public key cryptography
+  - Challenge-response authentication
+  - Per-node trust relationships
+  - Replay attack prevention
+  - Rate limiting (auth attempts)
+  - Session timeout management
+- **BBS Synchronization**
+  - Message replication across nodes
+  - Vector clock conflict resolution
+  - Incremental sync (since timestamp)
+  - Deduplication by message hash
+  - Bidirectional propagation
+  - Selective sync by bulletin number
+- **Weather & APRS Distribution**
+  - NWS bulletin parsing & flooding
+  - APRS position tracking
+  - Geographic queries
+  - Duplicate detection (5s window)
+  - Rate limiting (60 packets/min)
+  - Multi-hop flooding (max 3 hops)
+- **Monitoring & Administration**
+  - Real-time metrics (throughput/latency/loss)
+  - Node health tracking (active/stale/down)
+  - Ping/pong latency measurement
+  - Alert generation (latency/loss thresholds)
+  - Historical data aggregation (5-min intervals)
+  - REST API for dashboards
+
+### 🎛️ User Interface
+- **Web Dashboard**
+  - Modern Material-UI design
+  - Real-time frame viewer
+  - Live channel status
+  - Interactive configuration
+- **Settings Management**
+  - Channel configuration
+  - Digipeater settings
+  - IGate configuration
+  - BBS settings
+  - Winlink settings
+  - NexNet settings (QoS/Security/Monitoring)
+- **Monitoring Pages**
+  - Active alerts
+  - Last heard stations
+  - NexNet status & neighbors
+  - Traffic metrics
+  - System health
+
+### 🔧 Utility Features
+- **Callsign Lookup**
+  - Automatic FCC/callook.info queries
+  - Cached results (10-min TTL)
+  - APRS message responses
+  - Configurable endpoint
+- **Beacon Scheduler**
+  - Periodic position beacons
+  - Status beacons
+  - Weather beacons
+  - Configurable intervals
+  - Multi-channel support
+- **Last Heard Tracking**
+  - Station history
+  - Signal strength (if available)
+  - Timestamp tracking
+  - Mode detection (APRS/Packet)
+
+### 🛠️ Administration & Deployment
+- **Installation**
+  - One-command Debian/Ubuntu install
+  - Windows service installer
+  - Systemd integration
+  - Automatic dependency handling
+- **Configuration**
+  - JSON-based settings
+  - Hot-reload support
+  - Environment variables
+  - Per-channel overrides
+- **Monitoring**
+  - Systemd journal logging
+  - Metric alerts
+  - Error tracking
+  - Performance counters
+
+### 🔒 Reliability & Performance
+- **Error Handling**
+  - Graceful degradation
+  - Automatic reconnection
+  - Crash recovery
+  - Duplicate suppression
+- **Optimization**
+  - Efficient frame parsing
+  - Memory-bounded caches
+  - Periodic cleanup
+  - Token bucket rate limiting
+- **Scalability**
+  - Multi-channel scaling
+  - Mesh network routing
+  - Queue management
+  - Resource limits
+
+---
+
+## Quick Start (Development)
+
+**Prerequisites:** Node.js 18+
+
+```bash
 npm install
-cd client; npm install; cd ..
+cd client && npm install && cd ..
 npm run dev
 ```
 
 Server runs on port 3000, client on Vite default 5173.
-
-## Production install
-
-See Installation below for automated Linux and Windows service setup.
 
 ## Installation
 

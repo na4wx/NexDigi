@@ -5,7 +5,10 @@
     "rf": {
       "enabled": false,
       "channelId": null,
-      "services": ["bbs", "aprs-is"],
+      "services": [
+        "bbs",
+        "aprs-is"
+      ],
       "comment": "Set channelId to the channel ID you want to use for backbone RF traffic"
     },
     "internet": {
@@ -31,7 +34,10 @@
         "servers": []
       },
       "peers": [],
-      "services": ["winlink-cms", "bbs"],
+      "services": [
+        "winlink-cms",
+        "bbs"
+      ],
       "comment": "mode: 'mesh' (P2P, default), 'server' (hub - only listen), 'client' (edge node - connect to hub only). peers: Only used in mesh mode. Add peers as {host, port, callsign} objects."
     }
   },
@@ -43,7 +49,9 @@
     "comment": "updateInterval is in milliseconds (default 5 minutes). preferInternet=true favors Internet over RF when both are available."
   },
   "services": {
-    "offer": ["bbs"],
+    "offer": [
+      "bbs"
+    ],
     "request": [],
     "comment": "Services to offer to the backbone network. Options: bbs, winlink-cms, aprs-is, weather, time"
   },
@@ -59,7 +67,12 @@
           "port": 14240,
           "bindAddress": "0.0.0.0",
           "tls": true,
-          "services": ["winlink-cms", "bbs", "aprs-is", "weather"]
+          "services": [
+            "winlink-cms",
+            "bbs",
+            "aprs-is",
+            "weather"
+          ]
         }
       }
     },
@@ -70,7 +83,9 @@
         "rf": {
           "enabled": true,
           "channelId": "radio1",
-          "services": ["bbs"]
+          "services": [
+            "bbs"
+          ]
         },
         "internet": {
           "enabled": true,
@@ -93,8 +108,16 @@
           "mode": "mesh",
           "port": 14240,
           "peers": [
-            {"host": "peer1.example.com", "port": 14240, "callsign": "W3GHI-10"},
-            {"host": "peer2.example.com", "port": 14240, "callsign": "W4JKL-10"}
+            {
+              "host": "peer1.example.com",
+              "port": 14240,
+              "callsign": "W3GHI-10"
+            },
+            {
+              "host": "peer2.example.com",
+              "port": 14240,
+              "callsign": "W4JKL-10"
+            }
           ],
           "tls": true
         }

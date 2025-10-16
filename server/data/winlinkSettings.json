@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "gatewayCallsign": "NA4WX",
+  "host": "webmail.winlink.org",
+  "port": 8772,
+  "password": "Walker08@",
+  "autoConnect": true,
+  "channels": {
+    "radio1": {
+      "enabled": false,
+      "callsign": "NA4WX-10",
+      "mode": "RMS"
+    },
+    "radio2": {
+      "enabled": true,
+      "callsign": "NA4WX-10",
+      "mode": "RMS"
+    }
+  },
+  "sessionTimeoutSec": 300
+}

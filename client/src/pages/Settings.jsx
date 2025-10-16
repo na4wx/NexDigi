@@ -5,6 +5,7 @@ import IGatePage from './IGate'
 import WinlinkSettings from './WinlinkSettings'
 import BBSSettings from './BBSSettings'
 import DigipeaterSettings from './DigipeaterSettings'
+import NexNetSettings from './NexNetSettings'
 
 export default function SettingsPage() {
   const [tab, setTab] = useState(0)
@@ -33,6 +34,7 @@ export default function SettingsPage() {
           <Tab label="IGate" />
           <Tab label="BBS Settings" />
           <Tab label="Winlink" />
+          <Tab label="NexNet" />
         </Tabs>
       </Box>
 
@@ -59,6 +61,7 @@ export default function SettingsPage() {
     {tab === 2 && <IGatePage setGlobalMessage={setGlobalMessage} />}
     {tab === 3 && <BBSSettings setGlobalMessage={setGlobalMessage} />}
     {tab === 4 && <WinlinkSettings setGlobalMessage={setGlobalMessage} />}
+    {tab === 5 && <NexNetSettings setGlobalMessage={setGlobalMessage} />}
       </Box>
     </Box>
   )
