@@ -1,0 +1,42 @@
+{
+  "nodeCallsign": "NODE-TEST6",
+  "timestamp": 1760618604114,
+  "users": [
+    {
+      "callsign": "W2DEF",
+      "homeNode": "UNKNOWN",
+      "timestamp": 1760618435273,
+      "services": [
+        "winlink"
+      ],
+      "local": true
+    },
+    {
+      "callsign": "W3GHI",
+      "homeNode": "UNKNOWN",
+      "timestamp": 1760618435274,
+      "services": [
+        "winlink"
+      ],
+      "local": true
+    },
+    {
+      "callsign": "W7STU",
+      "homeNode": "NODE-TEST6",
+      "timestamp": 1760618604113,
+      "services": [
+        "winlink"
+      ],
+      "local": true
+    },
+    {
+      "callsign": "W8VWX",
+      "homeNode": "NODE-TEST6",
+      "timestamp": 1760618604113,
+      "services": [
+        "winlink"
+      ],
+      "local": true
+    }
+  ]
+}

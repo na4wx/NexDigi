@@ -15,6 +15,10 @@ const Heartbeat = require('./Heartbeat');
 const NeighborTable = require('./NeighborTable');
 const TopologyGraph = require('./TopologyGraph');
 const RoutingEngine = require('./RoutingEngine');
+const MessageQueue = require('./MessageQueue');
+const ReliabilityManager = require('./ReliabilityManager');
+const UserRegistry = require('./UserRegistry');
+const WinlinkForwarder = require('./WinlinkForwarder');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '../../data/backboneSettings.json');
 
@@ -35,10 +39,16 @@ class BackboneManager extends EventEmitter {
     this.heartbeat = null; // Will be initialized in initialize()
     this.topologyGraph = null; // Will be initialized in initialize()
     this.routingEngine = null; // Will be initialized in initialize()
+    this.messageQueue = null; // Will be initialized in initialize()
+    this.reliabilityManager = null; // Will be initialized in initialize()
+    this.userRegistry = null; // Will be initialized in initialize()
+    this.winlinkForwarder = null; // Will be initialized in initialize()
 
     // Periodic maintenance
     this.maintenanceInterval = null;
     this.routingUpdateTimer = null;
+    this.queueProcessorTimer = null;
+    this.reliabilityCheckTimer = null;
   }
 
   /**
@@ -57,7 +67,7 @@ class BackboneManager extends EventEmitter {
     }
 
     this.enabled = true;
-    this.localCallsign = this.config.localCallsign;
+    this.localCallsign = this.config.localCallsign || this.config.callsign || 'UNKNOWN';
 
     // Initialize neighbor table
     this.neighborTable = new NeighborTable({
@@ -115,6 +125,114 @@ class BackboneManager extends EventEmitter {
 
     console.log('[BackboneManager] Routing engine initialized');
 
+    // Initialize message queue
+    this.messageQueue = new MessageQueue({
+      maxSize: this.config.queue?.maxSize || 1000,
+      maxSizePerPriority: this.config.queue?.maxSizePerPriority || 500,
+      lowPriorityDropThreshold: this.config.queue?.lowPriorityDropThreshold || 0.8,
+      normalPriorityDropThreshold: this.config.queue?.normalPriorityDropThreshold || 0.9
+    });
+
+    this.messageQueue.on('dropped', (message, reason) => {
+      console.warn(`[BackboneManager] Message dropped: ${message.messageId} (${reason})`);
+      this.emit('message-dropped', message, reason);
+    });
+
+    console.log('[BackboneManager] Message queue initialized');
+
+    // Initialize reliability manager
+    this.reliabilityManager = new ReliabilityManager({
+      ackTimeout: this.config.reliability?.ackTimeout || 1000,
+      maxRetries: this.config.reliability?.maxRetries || 5,
+      cleanupInterval: this.config.reliability?.cleanupInterval || 60000
+    });
+
+    this.reliabilityManager.on('timeout', (messages) => {
+      // Re-queue messages that timed out
+      for (const { messageId, message } of messages) {
+        console.log(`[BackboneManager] Re-queuing message ${messageId} after timeout`);
+        this.messageQueue.enqueue(message);
+      }
+    });
+
+    this.reliabilityManager.on('failed', (messageId, reason) => {
+      console.error(`[BackboneManager] Message ${messageId} permanently failed: ${reason}`);
+      this.emit('message-failed', messageId, reason);
+    });
+
+    this.reliabilityManager.on('acknowledged', (messageId, rtt) => {
+      this.emit('message-acknowledged', messageId, rtt);
+    });
+
+    console.log('[BackboneManager] Reliability manager initialized');
+
+    // Initialize user registry
+    this.userRegistry = new UserRegistry({
+      nodeCallsign: this.localCallsign,
+      dataDir: this.config.userRegistry?.dataDir || './data',
+      syncInterval: this.config.userRegistry?.syncInterval || 300000, // 5 minutes
+      cleanupInterval: this.config.userRegistry?.cleanupInterval || 3600000, // 1 hour
+      entryTTL: this.config.userRegistry?.entryTTL || 86400000 // 24 hours
+    });
+
+    this.userRegistry.on('user-registered', (callsign, homeNode) => {
+      console.log(`[BackboneManager] User registered: ${callsign} → ${homeNode}`);
+      this.emit('user-registered', callsign, homeNode);
+    });
+
+    this.userRegistry.on('registry-updated', (stats) => {
+      console.log(`[BackboneManager] Registry updated: ${stats.applied} entries applied`);
+      this.emit('registry-updated', stats);
+    });
+
+    this.userRegistry.on('sync-needed', (update) => {
+      // Broadcast user registry update via backbone
+      this._broadcastRegistryUpdate(update);
+    });
+
+    await this.userRegistry.start();
+
+    console.log('[BackboneManager] User registry initialized');
+
+    // Initialize Winlink forwarder
+    this.winlinkForwarder = new WinlinkForwarder({
+      backboneManager: this,
+      userRegistry: this.userRegistry,
+      localCallsign: this.localCallsign,
+      cmsGateway: this.config.winlink?.cmsGateway || false,
+      messageTimeout: this.config.winlink?.messageTimeout || 3600000,
+      retryDelay: this.config.winlink?.retryDelay || 300000
+    });
+
+    this.winlinkForwarder.on('message-forwarded', (messageId, message, route) => {
+      console.log(`[BackboneManager] Winlink message forwarded: ${messageId} → ${route.destination}`);
+      this.emit('winlink-forwarded', messageId, message, route);
+    });
+
+    this.winlinkForwarder.on('message-delivered', (messageId, message, rtt) => {
+      console.log(`[BackboneManager] Winlink message delivered: ${messageId} (RTT: ${rtt}ms)`);
+      this.emit('winlink-delivered', messageId, message, rtt);
+    });
+
+    this.winlinkForwarder.on('message-received', (messageId, message) => {
+      console.log(`[BackboneManager] Winlink message received: ${messageId} for ${message.to}`);
+      this.emit('winlink-received', messageId, message);
+    });
+
+    this.winlinkForwarder.on('message-failed', (messageId, message, reason) => {
+      console.error(`[BackboneManager] Winlink message failed: ${messageId} - ${reason}`);
+      this.emit('winlink-failed', messageId, message, reason);
+    });
+
+    this.winlinkForwarder.on('message-for-cms', (messageId, message) => {
+      console.log(`[BackboneManager] Winlink message for CMS: ${messageId}`);
+      this.emit('winlink-for-cms', messageId, message);
+    });
+
+    this.winlinkForwarder.start();
+
+    console.log('[BackboneManager] Winlink forwarder initialized');
+
     // Initialize transports
     await this._initializeTransports();
 
@@ -133,11 +251,13 @@ class BackboneManager extends EventEmitter {
    * @private
    */
   async _loadConfig() {
+    // Store constructor config for later merge
+    const constructorConfig = { ...this.config };
+    
     try {
       console.log(`[BackboneManager] Loading config from: ${this.configPath}`);
       const data = await fs.readFile(this.configPath, 'utf8');
       this.config = JSON.parse(data);
-      console.log(`[BackboneManager] Configuration loaded, enabled: ${this.config.enabled}`);
     } catch (error) {
       if (error.code === 'ENOENT') {
         // Create default configuration
@@ -149,6 +269,10 @@ class BackboneManager extends EventEmitter {
         throw error;
       }
     }
+    
+    // Merge constructor config over loaded config (constructor takes precedence)
+    this.config = { ...this.config, ...constructorConfig };
+    console.log(`[BackboneManager] Configuration merged, enabled: ${this.config.enabled}`);
   }
 
   /**
@@ -324,6 +448,10 @@ class BackboneManager extends EventEmitter {
         this._handleNeighborList(packet, transportId);
         break;
       
+      case PacketType.REGISTRY_UPDATE:
+        this._handleRegistryUpdate(packet, transportId);
+        break;
+      
       default:
         console.log(`[BackboneManager] Unknown packet type: ${type}`);
     }
@@ -452,6 +580,38 @@ class BackboneManager extends EventEmitter {
     // Is this for us?
     if (destination === this.localCallsign || destination === 'CQ') {
       console.log(`[BackboneManager] Received data from ${source}, ${payload.length} bytes`);
+      
+      // Check if this is a Winlink message
+      try {
+        // Try to parse as JSON to detect Winlink encapsulation
+        const possibleWinlink = JSON.parse(payload.toString('utf8'));
+        
+        if (possibleWinlink.from && possibleWinlink.to && possibleWinlink.type && possibleWinlink.data) {
+          // This looks like a Winlink message
+          console.log(`[BackboneManager] Detected Winlink message: ${possibleWinlink.from} → ${possibleWinlink.to}`);
+          
+          if (this.winlinkForwarder) {
+            this.winlinkForwarder.receiveMessage(messageId, payload);
+          }
+          
+          // Send ACK
+          if (destination !== 'CQ') {
+            this._sendAck(source, messageId);
+          }
+          
+          // Mark as delivered
+          const cached = this.messageCache.get(messageId);
+          if (cached) {
+            cached.delivered = true;
+          }
+          
+          return;
+        }
+      } catch (e) {
+        // Not JSON or not Winlink format, treat as regular data
+      }
+      
+      // Regular data packet
       this.emit('data', {
         source,
         destination,
@@ -486,6 +646,12 @@ class BackboneManager extends EventEmitter {
    */
   _handleAck(packet, transportId) {
     const { source, messageId } = packet;
+    
+    // Process ACK with reliability manager
+    if (this.reliabilityManager) {
+      this.reliabilityManager.handleAck(messageId);
+    }
+    
     console.log(`[BackboneManager] ACK from ${source} for message ${messageId}`);
     this.emit('ack', { source, messageId, transport: transportId });
   }
@@ -573,10 +739,72 @@ class BackboneManager extends EventEmitter {
   }
 
   /**
+   * Handle REGISTRY_UPDATE packet
+   * @private
+   */
+  _handleRegistryUpdate(packet, transportId) {
+    const { source, payload } = packet;
+    
+    try {
+      const update = JSON.parse(payload.toString('utf8'));
+      
+      console.log(`[BackboneManager] Received registry update from ${source}, ${update.users?.length || 0} users`);
+      
+      // Process the update through UserRegistry
+      if (this.userRegistry) {
+        const stats = this.userRegistry.processUpdate(update);
+        console.log(`[BackboneManager] Registry update stats: ${stats.applied} applied, ${stats.conflicts} conflicts, ${stats.ignored} ignored`);
+      }
+      
+    } catch (error) {
+      console.error('[BackboneManager] Failed to parse registry update:', error.message);
+    }
+  }
+
+  /**
+   * Broadcast user registry update
+   * @private
+   */
+  _broadcastRegistryUpdate(update) {
+    try {
+      const payload = Buffer.from(JSON.stringify(update), 'utf8');
+      
+      // Create REGISTRY_UPDATE packet
+      const packet = {
+        type: PacketType.REGISTRY_UPDATE,
+        source: this.localCallsign,
+        destination: 'BROADCAST',
+        payload: payload,
+        ttl: 16,
+        priority: Priority.NORMAL,
+        flags: PacketFlags.NONE
+      };
+      
+      const encoded = PacketFormat.encode(packet);
+      
+      // Broadcast on all transports
+      for (const [transportId, transport] of this.transports) {
+        if (transport.connected) {
+          transport.send(encoded)
+            .catch(error => {
+              console.error(`[BackboneManager] Failed to broadcast registry update on ${transportId}:`, error.message);
+            });
+        }
+      }
+      
+      console.log(`[BackboneManager] Broadcast registry update: ${update.users.length} users`);
+      
+    } catch (error) {
+      console.error('[BackboneManager] Failed to broadcast registry update:', error.message);
+    }
+  }
+
+  /**
    * Send data to destination
    * @param {String} destination - Destination callsign
    * @param {Buffer} data - User data
    * @param {Object} options
+   * @param {Number} options.priority - Message priority (0-3)
    * @returns {Promise<String>} - Message ID
    */
   async sendData(destination, data, options = {}) {
@@ -592,18 +820,87 @@ class BackboneManager extends EventEmitter {
       options
     );
 
-    // Select best transport
-    const transport = this._selectTransport(destination, options);
-    if (!transport) {
-      throw new Error('No transport available to reach destination');
-    }
-
-    // Send packet
-    await transport.send(destination, packet, options);
-
     // Extract message ID
     const decoded = PacketFormat.decode(packet);
-    return decoded.messageId;
+    const messageId = decoded.messageId;
+
+    // Enqueue message for sending
+    const queued = this.messageQueue.enqueue({
+      messageId: messageId,
+      destination: destination,
+      source: this.localCallsign,
+      packet: packet,
+      priority: options.priority !== undefined ? options.priority : Priority.NORMAL,
+      options: options,
+      timestamp: Date.now(),
+      retries: 0
+    });
+
+    if (!queued) {
+      throw new Error('Message queue full, message dropped');
+    }
+
+    return messageId;
+  }
+
+  /**
+   * Process message queue
+   * Called periodically to send queued messages
+   * @private
+   */
+  async _processMessageQueue() {
+    if (!this.messageQueue || this.messageQueue.isEmpty()) {
+      return;
+    }
+
+    // Process one message per tick to avoid blocking
+    const message = this.messageQueue.dequeue();
+    
+    if (!message) {
+      return;
+    }
+
+    try {
+      // Select best transport
+      const transport = this._selectTransport(message.destination, message.options);
+      
+      if (!transport) {
+        console.warn(`[BackboneManager] No transport available for ${message.destination}, re-queuing`);
+        
+        // Re-queue if retries left
+        if (message.retries < 5) {
+          message.retries++;
+          this.messageQueue.enqueue(message);
+        } else {
+          console.error(`[BackboneManager] Max retries reached for message ${message.messageId}`);
+          this.emit('send-failed', message.messageId, 'No transport available');
+        }
+        return;
+      }
+
+      // Send packet
+      await transport.send(message.destination, message.packet, message.options);
+      
+      // Track with reliability manager for ACK
+      if (this.reliabilityManager && message.options?.requireAck !== false) {
+        this.reliabilityManager.trackMessage(message.messageId, message);
+      }
+      
+      console.log(`[BackboneManager] Sent message ${message.messageId} to ${message.destination} (queue: ${this.messageQueue.size()})`);
+      this.emit('message-sent', message.messageId, message.destination);
+
+    } catch (error) {
+      console.error(`[BackboneManager] Error sending message ${message.messageId}:`, error.message);
+      
+      // Re-queue if retries left
+      if (message.retries < 5) {
+        message.retries++;
+        this.messageQueue.enqueue(message);
+      } else {
+        console.error(`[BackboneManager] Max retries reached for message ${message.messageId}`);
+        this.emit('send-failed', message.messageId, error.message);
+      }
+    }
   }
 
   /**
@@ -972,6 +1269,22 @@ class BackboneManager extends EventEmitter {
     }, this.config.routingUpdateInterval || 60000); // Every minute by default
 
     console.log('[BackboneManager] Periodic routing updates started');
+
+    // Start message queue processor
+    this.queueProcessorTimer = setInterval(() => {
+      this._processMessageQueue();
+    }, 100); // Process queue every 100ms
+
+    console.log('[BackboneManager] Message queue processor started');
+
+    // Start reliability checker
+    if (this.reliabilityManager) {
+      this.reliabilityManager.start();
+      this.reliabilityCheckTimer = setInterval(() => {
+        this.reliabilityManager.checkTimeouts();
+      }, 500); // Check for timeouts every 500ms
+      console.log('[BackboneManager] Reliability checker started');
+    }
   }
 
   /**
@@ -1031,6 +1344,30 @@ class BackboneManager extends EventEmitter {
       clearInterval(this.routingUpdateTimer);
     }
 
+    // Stop queue processor
+    if (this.queueProcessorTimer) {
+      clearInterval(this.queueProcessorTimer);
+    }
+
+    // Stop reliability checker
+    if (this.reliabilityCheckTimer) {
+      clearInterval(this.reliabilityCheckTimer);
+    }
+    
+    if (this.reliabilityManager) {
+      this.reliabilityManager.stop();
+    }
+
+    // Stop user registry
+    if (this.userRegistry) {
+      await this.userRegistry.stop();
+    }
+
+    // Stop Winlink forwarder
+    if (this.winlinkForwarder) {
+      this.winlinkForwarder.stop();
+    }
+
     // Stop neighbor broadcasts if running
     const internet = this.transports.get('internet');
     if (internet) {
@@ -1071,7 +1408,9 @@ class BackboneManager extends EventEmitter {
       heartbeat: null,
       neighborTable: null,
       topologyGraph: null,
-      routingEngine: null
+      routingEngine: null,
+      messageQueue: null,
+      reliabilityManager: null
     };
 
     // Heartbeat status
@@ -1123,6 +1462,26 @@ class BackboneManager extends EventEmitter {
       };
     }
 
+    // Message queue status
+    if (this.messageQueue) {
+      status.messageQueue = this.messageQueue.getStats();
+    }
+
+    // Reliability manager status
+    if (this.reliabilityManager) {
+      status.reliabilityManager = this.reliabilityManager.getStats();
+    }
+
+    // User registry status
+    if (this.userRegistry) {
+      status.userRegistry = this.userRegistry.getStats();
+    }
+
+    // Winlink forwarder status
+    if (this.winlinkForwarder) {
+      status.winlinkForwarder = this.winlinkForwarder.getStats();
+    }
+
     // Transport status
     for (const [id, transport] of this.transports) {
       const transportStatus = {
@@ -1160,6 +1519,123 @@ class BackboneManager extends EventEmitter {
     }
 
     return status;
+  }
+
+  /**
+   * Register a local Winlink user
+   * @param {String} callsign - User callsign
+   * @param {Object} options - User options
+   * @returns {Boolean} Success
+   */
+  registerUser(callsign, options = {}) {
+    if (!this.userRegistry) {
+      console.warn('[BackboneManager] User registry not initialized');
+      return false;
+    }
+    
+    return this.userRegistry.registerLocalUser(callsign, options);
+  }
+
+  /**
+   * Unregister a local Winlink user
+   * @param {String} callsign - User callsign
+   * @returns {Boolean} Success
+   */
+  unregisterUser(callsign) {
+    if (!this.userRegistry) {
+      return false;
+    }
+    
+    return this.userRegistry.unregisterLocalUser(callsign);
+  }
+
+  /**
+   * Get home node for a user
+   * @param {String} callsign - User callsign
+   * @returns {String|null} Home node callsign or null
+   */
+  getUserHomeNode(callsign) {
+    if (!this.userRegistry) {
+      return null;
+    }
+    
+    return this.userRegistry.getHomeNode(callsign);
+  }
+
+  /**
+   * Check if user is local
+   * @param {String} callsign - User callsign
+   * @returns {Boolean}
+   */
+  isLocalUser(callsign) {
+    if (!this.userRegistry) {
+      return false;
+    }
+    
+    return this.userRegistry.isLocalUser(callsign);
+  }
+
+  /**
+   * Get all users registered on this node
+   * @returns {Array} Array of callsigns
+   */
+  getLocalUsers() {
+    if (!this.userRegistry) {
+      return [];
+    }
+    
+    return Array.from(this.userRegistry.localUsers);
+  }
+
+  /**
+   * Get full user registry snapshot
+   * @returns {Array} All user entries
+   */
+  getUserRegistry() {
+    if (!this.userRegistry) {
+      return [];
+    }
+    
+    return this.userRegistry.getSnapshot();
+  }
+
+  /**
+   * Forward a Winlink message
+   * @param {Object} message - Winlink message
+   * @param {String} message.from - Sender callsign
+   * @param {String} message.to - Recipient callsign
+   * @param {String} message.type - Message type (p2p, to-cms, from-cms, etc.)
+   * @param {Buffer} message.data - Message data
+   * @param {Object} message.metadata - Additional metadata
+   * @returns {Promise<String>} Message ID
+   */
+  async forwardWinlinkMessage(message) {
+    if (!this.winlinkForwarder) {
+      throw new Error('Winlink forwarder not initialized');
+    }
+    
+    return await this.winlinkForwarder.forwardMessage(message);
+  }
+
+  /**
+   * Get Winlink message status
+   * @param {String} messageId - Message ID
+   * @returns {Object|null} Message status or null
+   */
+  getWinlinkMessageStatus(messageId) {
+    if (!this.winlinkForwarder) {
+      return null;
+    }
+    
+    return this.winlinkForwarder.getMessageStatus(messageId);
+  }
+
+  /**
+   * Check if this node is a CMS gateway
+   * @returns {Boolean}
+   */
+  isCMSGateway() {
+    return this.winlinkForwarder ? this.winlinkForwarder.cmsGateway : false;
   }
 }
 

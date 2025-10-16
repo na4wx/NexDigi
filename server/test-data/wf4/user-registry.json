@@ -1,0 +1,15 @@
+{
+  "nodeCallsign": "NODE-B",
+  "timestamp": 1760619168791,
+  "users": [
+    {
+      "callsign": "W2DEF",
+      "homeNode": "NODE-B",
+      "timestamp": 1760619168787,
+      "services": [
+        "winlink"
+      ],
+      "local": true
+    }
+  ]
+}

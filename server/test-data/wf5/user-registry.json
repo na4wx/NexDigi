@@ -1,0 +1,15 @@
+{
+  "nodeCallsign": "NODE-A",
+  "timestamp": 1760619168904,
+  "users": [
+    {
+      "callsign": "W3GHI",
+      "homeNode": "NODE-B",
+      "timestamp": 1760619168793,
+      "services": [
+        "winlink"
+      ],
+      "local": false
+    }
+  ]
+}
