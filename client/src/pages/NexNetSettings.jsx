@@ -30,20 +30,25 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import axios from 'axios';
 
-export default function BackboneSettings() {
+export default function NexNetSettings() {
   const [config, setConfig] = useState(null);
   const [saveMessage, setSaveMessage] = useState('');
   const [availableChannels, setAvailableChannels] = useState([]);
   const [peerDialog, setPeerDialog] = useState(false);
   const [hubDialog, setHubDialog] = useState(false);
+  const [trustedNodeDialog, setTrustedNodeDialog] = useState(false);
   const [newPeer, setNewPeer] = useState({ host: '', port: 14240, callsign: '' });
   const [newHub, setNewHub] = useState({ host: '', port: 14240, callsign: '' });
+  const [newTrustedNode, setNewTrustedNode] = useState({ callsign: '', publicKey: '' });
+  const [publicKey, setPublicKey] = useState(null);
+  const [keyGenLoading, setKeyGenLoading] = useState(false);
 
   const backend = `http://${location.hostname}:3000`;
 
   useEffect(() => {
     fetchSettings();
     fetchChannels();
+    fetchPublicKey();
   }, []);
 
   const fetchChannels = async () => {
@@ -60,7 +65,36 @@ export default function BackboneSettings() {
       const response = await axios.get(`${backend}/api/backbone/config`);
       setConfig(response.data);
     } catch (error) {
-      console.error('Error fetching backbone settings:', error);
+      console.error('Error fetching NexNet settings:', error);
+    }
+  };
+
+  const fetchPublicKey = async () => {
+    try {
+      const response = await axios.get(`${backend}/api/nexnet/security/public-key`);
+      setPublicKey(response.data.publicKey);
+    } catch (error) {
+      console.error('Error fetching public key:', error);
+    }
+  };
+
+  const generateKeys = async () => {
+    if (!confirm('Generate new security keys? This will invalidate existing trusted node connections.')) {
+      return;
+    }
+    
+    setKeyGenLoading(true);
+    try {
+      const response = await axios.post(`${backend}/api/nexnet/security/generate-keys`);
+      setPublicKey(response.data.publicKey);
+      setSaveMessage('New security keys generated successfully!');
+      setTimeout(() => setSaveMessage(''), 5000);
+    } catch (error) {
+      console.error('Error generating keys:', error);
+      setSaveMessage('Error generating keys. Please try again.');
+      setTimeout(() => setSaveMessage(''), 5000);
+    } finally {
+      setKeyGenLoading(false);
     }
   };
 
@@ -165,6 +199,37 @@ export default function BackboneSettings() {
     });
   };
 
+  const addTrustedNode = () => {
+    if (!newTrustedNode.callsign || !newTrustedNode.publicKey) {
+      alert('Please fill in all trusted node fields');
+      return;
+    }
+
+    const trustedNodes = config.security?.trustedNodes || [];
+    setConfig({
+      ...config,
+      security: {
+        ...config.security,
+        trustedNodes: [...trustedNodes, { ...newTrustedNode }]
+      }
+    });
+    
+    setNewTrustedNode({ callsign: '', publicKey: '' });
+    setTrustedNodeDialog(false);
+  };
+
+  const removeTrustedNode = (index) => {
+    const trustedNodes = [...config.security.trustedNodes];
+    trustedNodes.splice(index, 1);
+    setConfig({
+      ...config,
+      security: {
+        ...config.security,
+        trustedNodes
+      }
+    });
+  };
+
   if (!config) {
     return (
       <Box sx={{ padding: '2rem' }}>
@@ -178,7 +243,7 @@ export default function BackboneSettings() {
   return (
     <Box sx={{ padding: '2rem' }}>
       <Typography variant="h4" gutterBottom>
-        Backbone Network Settings
+        NexNet Settings
       </Typography>
 
       {saveMessage && (
@@ -200,7 +265,7 @@ export default function BackboneSettings() {
               onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
             />
           }
-          label="Enable Backbone Network"
+          label="Enable NexNet"
           sx={{ marginBottom: '1rem' }}
         />
 
@@ -558,9 +623,392 @@ export default function BackboneSettings() {
         />
       </Paper>
 
+      {/* Quality of Service (QoS) */}
+      <Paper sx={{ padding: '2rem', marginBottom: '2rem' }}>
+        <Typography variant="h6" gutterBottom>
+          Quality of Service (QoS)
+        </Typography>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.qos?.enabled !== false}
+              onChange={(e) => setConfig({
+                ...config,
+                qos: { ...config.qos, enabled: e.target.checked }
+              })}
+            />
+          }
+          label="Enable QoS Priority Queuing"
+          sx={{ marginBottom: '1rem' }}
+        />
+
+        <TextField
+          fullWidth
+          type="number"
+          label="Bandwidth Limit (bytes/sec)"
+          value={config.qos?.bandwidthLimit || 10000}
+          onChange={(e) => setConfig({
+            ...config,
+            qos: { ...config.qos, bandwidthLimit: Number(e.target.value) }
+          })}
+          sx={{ marginBottom: '1rem' }}
+          helperText="Maximum bandwidth for packet transmission (0 = unlimited)"
+        />
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+          <TextField
+            type="number"
+            label="Emergency Queue Size"
+            value={config.qos?.emergencyQueueSize || 100}
+            onChange={(e) => setConfig({
+              ...config,
+              qos: { ...config.qos, emergencyQueueSize: Number(e.target.value) }
+            })}
+            helperText="Priority 0 (TOR/SVR/FFW)"
+          />
+          <TextField
+            type="number"
+            label="High Priority Queue Size"
+            value={config.qos?.highQueueSize || 200}
+            onChange={(e) => setConfig({
+              ...config,
+              qos: { ...config.qos, highQueueSize: Number(e.target.value) }
+            })}
+            helperText="Priority 1 (bulletins/weather)"
+          />
+          <TextField
+            type="number"
+            label="Normal Queue Size"
+            value={config.qos?.normalQueueSize || 500}
+            onChange={(e) => setConfig({
+              ...config,
+              qos: { ...config.qos, normalQueueSize: Number(e.target.value) }
+            })}
+            helperText="Priority 2 (standard traffic)"
+          />
+          <TextField
+            type="number"
+            label="Low Priority Queue Size"
+            value={config.qos?.lowQueueSize || 1000}
+            onChange={(e) => setConfig({
+              ...config,
+              qos: { ...config.qos, lowQueueSize: Number(e.target.value) }
+            })}
+            helperText="Priority 3 (routine messages)"
+          />
+        </Box>
+      </Paper>
+
+      {/* Load Balancing */}
+      <Paper sx={{ padding: '2rem', marginBottom: '2rem' }}>
+        <Typography variant="h6" gutterBottom>
+          Load Balancing
+        </Typography>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.loadBalancing?.enabled !== false}
+              onChange={(e) => setConfig({
+                ...config,
+                loadBalancing: { ...config.loadBalancing, enabled: e.target.checked }
+              })}
+            />
+          }
+          label="Enable Load Balancing"
+          sx={{ marginBottom: '1rem' }}
+        />
+
+        <FormControl fullWidth sx={{ marginBottom: '1rem' }}>
+          <InputLabel>Algorithm</InputLabel>
+          <Select
+            value={config.loadBalancing?.algorithm || 'weighted'}
+            onChange={(e) => setConfig({
+              ...config,
+              loadBalancing: { ...config.loadBalancing, algorithm: e.target.value }
+            })}
+            label="Algorithm"
+          >
+            <MenuItem value="weighted">⚖️ Weighted (Prefer Better Routes)</MenuItem>
+            <MenuItem value="round-robin">🔄 Round-Robin (Alternate Evenly)</MenuItem>
+            <MenuItem value="least-loaded">📊 Least-Loaded (Choose Least Used)</MenuItem>
+          </Select>
+        </FormControl>
+
+        <TextField
+          fullWidth
+          type="number"
+          label="Failover Threshold"
+          value={config.loadBalancing?.failureThreshold || 3}
+          onChange={(e) => setConfig({
+            ...config,
+            loadBalancing: { ...config.loadBalancing, failureThreshold: Number(e.target.value) }
+          })}
+          helperText="Consecutive failures before automatic failover"
+        />
+      </Paper>
+
+      {/* Mesh Healing */}
+      <Paper sx={{ padding: '2rem', marginBottom: '2rem' }}>
+        <Typography variant="h6" gutterBottom>
+          Mesh Self-Healing
+        </Typography>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.meshHealing?.enabled !== false}
+              onChange={(e) => setConfig({
+                ...config,
+                meshHealing: { ...config.meshHealing, enabled: e.target.checked }
+              })}
+            />
+          }
+          label="Enable Mesh Self-Healing"
+          sx={{ marginBottom: '1rem' }}
+        />
+
+        <TextField
+          fullWidth
+          type="number"
+          label="LSA Broadcast Interval (seconds)"
+          value={config.meshHealing?.lsaInterval || 60}
+          onChange={(e) => setConfig({
+            ...config,
+            meshHealing: { ...config.meshHealing, lsaInterval: Number(e.target.value) }
+          })}
+          sx={{ marginBottom: '1rem' }}
+          helperText="How often to broadcast Link State Advertisements"
+        />
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+          <TextField
+            type="number"
+            label="Link Timeout (seconds)"
+            value={config.meshHealing?.linkTimeout || 120}
+            onChange={(e) => setConfig({
+              ...config,
+              meshHealing: { ...config.meshHealing, linkTimeout: Number(e.target.value) }
+            })}
+            helperText="Time before declaring link down"
+          />
+          <TextField
+            type="number"
+            label="Discovery Timeout (seconds)"
+            value={config.meshHealing?.discoveryTimeout || 30}
+            onChange={(e) => setConfig({
+              ...config,
+              meshHealing: { ...config.meshHealing, discoveryTimeout: Number(e.target.value) }
+            })}
+            helperText="Time to wait for route discovery"
+          />
+        </Box>
+      </Paper>
+
+      {/* Security & Authentication */}
+      <Paper sx={{ padding: '2rem', marginBottom: '2rem' }}>
+        <Typography variant="h6" gutterBottom>
+          Security & Authentication
+        </Typography>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.security?.enabled !== false}
+              onChange={(e) => setConfig({
+                ...config,
+                security: { ...config.security, enabled: e.target.checked }
+              })}
+            />
+          }
+          label="Enable Security"
+          sx={{ marginBottom: '1rem' }}
+        />
+
+        <Alert severity="info" sx={{ mb: 2 }}>
+          🔐 Ed25519 public key cryptography with challenge-response authentication
+        </Alert>
+
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle2" gutterBottom>
+            Your Public Key:
+          </Typography>
+          <TextField
+            fullWidth
+            multiline
+            rows={2}
+            value={publicKey || 'No key generated'}
+            InputProps={{ readOnly: true }}
+            sx={{ mb: 1, fontFamily: 'monospace', fontSize: '0.85rem' }}
+          />
+          <Button
+            variant="outlined"
+            onClick={generateKeys}
+            disabled={keyGenLoading}
+            size="small"
+          >
+            {keyGenLoading ? 'Generating...' : '🔑 Generate New Keys'}
+          </Button>
+        </Box>
+
+        <Divider sx={{ my: 2 }} />
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+          <TextField
+            type="number"
+            label="Session Timeout (seconds)"
+            value={config.security?.sessionTimeout || 300}
+            onChange={(e) => setConfig({
+              ...config,
+              security: { ...config.security, sessionTimeout: Number(e.target.value) }
+            })}
+            helperText="Authentication session duration"
+          />
+          <TextField
+            type="number"
+            label="Max Auth Attempts (per minute)"
+            value={config.security?.maxAuthAttempts || 5}
+            onChange={(e) => setConfig({
+              ...config,
+              security: { ...config.security, maxAuthAttempts: Number(e.target.value) }
+            })}
+            helperText="Rate limiting for auth requests"
+          />
+        </Box>
+
+        <Divider sx={{ my: 2 }} />
+
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="subtitle1">Trusted Nodes</Typography>
+          <Button
+            startIcon={<AddIcon />}
+            onClick={() => setTrustedNodeDialog(true)}
+            variant="outlined"
+            size="small"
+          >
+            Add Trusted Node
+          </Button>
+        </Box>
+
+        {config.security?.trustedNodes?.length > 0 ? (
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Callsign</TableCell>
+                <TableCell>Public Key</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {config.security.trustedNodes.map((node, index) => (
+                <TableRow key={index}>
+                  <TableCell>{node.callsign}</TableCell>
+                  <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {node.publicKey}
+                  </TableCell>
+                  <TableCell>
+                    <IconButton size="small" onClick={() => removeTrustedNode(index)}>
+                      <DeleteIcon />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <Alert severity="info">
+            No trusted nodes configured. Add trusted nodes to enable authenticated connections.
+          </Alert>
+        )}
+      </Paper>
+
+      {/* Monitoring */}
+      <Paper sx={{ padding: '2rem', marginBottom: '2rem' }}>
+        <Typography variant="h6" gutterBottom>
+          Monitoring & Administration
+        </Typography>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.monitoring?.enabled !== false}
+              onChange={(e) => setConfig({
+                ...config,
+                monitoring: { ...config.monitoring, enabled: e.target.checked }
+              })}
+            />
+          }
+          label="Enable Monitoring"
+          sx={{ marginBottom: '1rem' }}
+        />
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2, mb: 2 }}>
+          <TextField
+            type="number"
+            label="Health Check Interval (seconds)"
+            value={config.monitoring?.healthCheckInterval || 30}
+            onChange={(e) => setConfig({
+              ...config,
+              monitoring: { ...config.monitoring, healthCheckInterval: Number(e.target.value) }
+            })}
+            helperText="How often to check node health"
+          />
+          <TextField
+            type="number"
+            label="Aggregation Interval (seconds)"
+            value={config.monitoring?.aggregationInterval || 300}
+            onChange={(e) => setConfig({
+              ...config,
+              monitoring: { ...config.monitoring, aggregationInterval: Number(e.target.value) }
+            })}
+            helperText="Historical data aggregation"
+          />
+        </Box>
+
+        <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+          Alert Thresholds:
+        </Typography>
+
+        <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+          <TextField
+            type="number"
+            label="High Latency (ms)"
+            value={config.monitoring?.alertThresholds?.latency || 1000}
+            onChange={(e) => setConfig({
+              ...config,
+              monitoring: {
+                ...config.monitoring,
+                alertThresholds: {
+                  ...config.monitoring?.alertThresholds,
+                  latency: Number(e.target.value)
+                }
+              }
+            })}
+            helperText="Alert when latency exceeds"
+          />
+          <TextField
+            type="number"
+            label="High Packet Loss (%)"
+            value={config.monitoring?.alertThresholds?.packetLoss || 10}
+            onChange={(e) => setConfig({
+              ...config,
+              monitoring: {
+                ...config.monitoring,
+                alertThresholds: {
+                  ...config.monitoring?.alertThresholds,
+                  packetLoss: Number(e.target.value)
+                }
+              }
+            })}
+            helperText="Alert when packet loss exceeds"
+          />
+        </Box>
+      </Paper>
+
       {/* Save Button */}
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2 }}>
-        <Button variant="outlined" href="#/backbone">
+        <Button variant="outlined" href="#/nexnet">
           Cancel
         </Button>
         <Button variant="contained" onClick={saveSettings}>
@@ -629,6 +1077,34 @@ export default function BackboneSettings() {
         <DialogActions>
           <Button onClick={() => setHubDialog(false)}>Cancel</Button>
           <Button onClick={addFallbackHub} variant="contained">Add</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Trusted Node Dialog */}
+      <Dialog open={trustedNodeDialog} onClose={() => setTrustedNodeDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Add Trusted Node</DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            label="Callsign"
+            value={newTrustedNode.callsign}
+            onChange={(e) => setNewTrustedNode({ ...newTrustedNode, callsign: e.target.value.toUpperCase() })}
+            sx={{ mt: 2, mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            multiline
+            rows={3}
+            label="Public Key"
+            value={newTrustedNode.publicKey}
+            onChange={(e) => setNewTrustedNode({ ...newTrustedNode, publicKey: e.target.value })}
+            helperText="Paste the Ed25519 public key from the remote node"
+            sx={{ fontFamily: 'monospace' }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setTrustedNodeDialog(false)}>Cancel</Button>
+          <Button onClick={addTrustedNode} variant="contained">Add</Button>
         </DialogActions>
       </Dialog>
     </Box>

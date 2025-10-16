@@ -662,6 +662,13 @@ try {
 } catch (e) { 
   console.error('Failed to mount backbone routes', e); 
 }
+// NexNet advanced settings routes
+try {
+  const nexnetRoutes = require('./routes/nexnet');
+  app.use('/api/nexnet', nexnetRoutes);
+} catch (e) {
+  console.error('Failed to mount nexnet routes', e);
+}
 
 // Expose current digipeaterSettings to route handlers that access req.app.locals
 app.locals.digipeaterSettings = digipeaterSettings;

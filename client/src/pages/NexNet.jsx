@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 
-export default function Backbone({ setPage }) {
+export default function NexNet({ setPage }) {
   const [status, setStatus] = useState(null);
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -91,7 +91,7 @@ export default function Backbone({ setPage }) {
   if (loading) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold mb-4">Backbone Network</h1>
+        <h1 className="text-2xl font-bold mb-4">NexNet</h1>
         <p>Loading...</p>
       </div>
     );
@@ -100,7 +100,7 @@ export default function Backbone({ setPage }) {
   if (error) {
     return (
       <div className="p-6">
-        <h1 className="text-2xl font-bold mb-4">Backbone Network</h1>
+        <h1 className="text-2xl font-bold mb-4">NexNet</h1>
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
           {error}
         </div>
@@ -111,10 +111,10 @@ export default function Backbone({ setPage }) {
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">Backbone Network</h1>
+        <h1 className="text-2xl font-bold">NexNet</h1>
         <div className="flex gap-2">
           <button
-            onClick={() => setPage && setPage('backbone-settings')}
+            onClick={() => setPage && setPage('nexnet-settings')}
             className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded"
           >
             ⚙️ Settings
@@ -367,10 +367,10 @@ export default function Backbone({ setPage }) {
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
           <h3 className="font-semibold text-blue-900 mb-2">Getting Started</h3>
           <p className="text-sm text-blue-800 mb-2">
-            The backbone network allows multiple NexDigi nodes to connect and share data via RF and/or Internet.
+            NexNet allows multiple NexDigi nodes to connect and share data via RF and/or Internet using advanced mesh networking with QoS, load balancing, and self-healing capabilities.
           </p>
           <p className="text-sm text-blue-800">
-            To enable the backbone, configure your settings and click the Enable button above. You'll need to restart the server for changes to take effect.
+            To enable NexNet, configure your settings and click the Enable button above. You'll need to restart the server for changes to take effect.
           </p>
         </div>
       )}
