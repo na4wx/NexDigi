@@ -384,7 +384,9 @@ class SecurityManager extends EventEmitter {
     // In production, implement proper ECDH key exchange
     const theirPublicKeyBuffer = Buffer.isBuffer(theirPublicKey) ? theirPublicKey : Buffer.from(theirPublicKey, 'hex');
     
-    const combined = Buffer.concat([this.publicKey, theirPublicKeyBuffer]);
+    // Sort keys to ensure both parties derive the same shared key
+    const keys = [this.publicKey, theirPublicKeyBuffer].sort(Buffer.compare);
+    const combined = Buffer.concat(keys);
     const sharedKey = crypto.createHash('sha256').update(combined).digest();
     
     return sharedKey;
