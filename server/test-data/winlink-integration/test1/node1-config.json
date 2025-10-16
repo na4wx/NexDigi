@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "localCallsign": "NODE-1",
+  "dataDir": "./test-data/winlink-integration/test1/node1",
+  "userRegistry": {
+    "syncInterval": 1000
+  }
+}

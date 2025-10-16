@@ -32,7 +32,8 @@ const PacketType = {
   SERVICE_REPLY: 0x06,// Service discovery reply
   KEEPALIVE: 0x07,    // Keep connection alive
   ERROR: 0x08,        // Error notification
-  NEIGHBOR_LIST: 0x09 // Hub-provided neighbor list (hub-and-spoke mode)
+  NEIGHBOR_LIST: 0x09,// Hub-provided neighbor list (hub-and-spoke mode)
+  REGISTRY_UPDATE: 0x0A // User registry update
 };
 
 // Packet flags
