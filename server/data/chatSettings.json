@@ -1,0 +1,10 @@
+{
+  "defaultRoom": "LOBBY",
+  "maxUsersPerRoom": 50,
+  "maxMessageHistory": 100,
+  "messageRateLimit": 10,
+  "typingIndicators": true,
+  "notificationSounds": true,
+  "showJoinLeave": true,
+  "messageRetentionDays": 7
+}

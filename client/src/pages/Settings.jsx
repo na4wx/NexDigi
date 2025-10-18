@@ -6,6 +6,7 @@ import WinlinkSettings from './WinlinkSettings'
 import BBSSettings from './BBSSettings'
 import DigipeaterSettings from './DigipeaterSettings'
 import NexNetSettings from './NexNetSettings'
+import ChatSettings from './ChatSettings'
 
 export default function SettingsPage() {
   const [tab, setTab] = useState(0)
@@ -35,6 +36,7 @@ export default function SettingsPage() {
           <Tab label="BBS Settings" />
           <Tab label="Winlink" />
           <Tab label="NexNet" />
+          <Tab label="Chat" />
         </Tabs>
       </Box>
 
@@ -62,6 +64,7 @@ export default function SettingsPage() {
     {tab === 3 && <BBSSettings setGlobalMessage={setGlobalMessage} />}
     {tab === 4 && <WinlinkSettings setGlobalMessage={setGlobalMessage} />}
     {tab === 5 && <NexNetSettings setGlobalMessage={setGlobalMessage} />}
+    {tab === 6 && <ChatSettings setGlobalMessage={setGlobalMessage} />}
       </Box>
     </Box>
   )

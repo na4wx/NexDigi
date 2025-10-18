@@ -15,14 +15,29 @@ import BBS from './pages/BBS'
 import BBSSettings from './pages/BBSSettings'
 import NexNet from './pages/NexNet'
 import NexNetSettings from './pages/NexNetSettings'
+import Chat from './pages/Chat'
 import axios from 'axios'
+import { serverManager } from './utils/serverManager'
+import ServerSetupDialog from './components/ServerSetupDialog'
 
 export default function App() {
   const [frames, setFrames] = useState([])
   const [page, setPage] = useState('home')
   const [bbsEnabled, setBbsEnabled] = useState(false);
   const [alertsEnabled, setAlertsEnabled] = useState(false);
+  const [showSetup, setShowSetup] = useState(false)
   const wsRef = useRef(null)
+
+  // Returns the configured backend URL (http://host or https://host) or default localhost dev server
+  const getBackend = () => {
+    const active = serverManager.getActiveServer()
+    if (active && active.host) {
+      const protocol = active.protocol || 'http'
+      const host = active.host.replace(/^https?:\/\//, '') // Strip any existing protocol
+      return `${protocol}://${host}`
+    }
+    return `http://${location.hostname}:3000`
+  }
 
   // Safely decode payloads that may arrive as different shapes from the server:
   // - string (already decoded)
@@ -82,8 +97,11 @@ export default function App() {
   }
 
   useEffect(() => {
-    const backend = `http://${location.hostname}:3000`
-    const ws = new WebSocket(backend.replace('http', 'ws'))
+    if (!serverManager.hasServers()) return; // Don't connect until server is configured
+    
+    const backend = getBackend()
+    const wsUrl = backend.replace('http', 'ws') + (serverManager.getActiveServer()?.password ? `?password=${encodeURIComponent(serverManager.getActiveServer().password)}` : '')
+    const ws = new WebSocket(wsUrl)
     wsRef.current = ws
     ws.addEventListener('message', (ev) => {
       try {
@@ -107,7 +125,7 @@ export default function App() {
     })
     // Populate initial recent frames from REST in case WS hasn't delivered yet
     try {
-      fetch(`${backend}/api/frames`).then(r => r.json()).then(j => {
+      fetch(`${backend}/api/frames`, { headers: { 'X-UI-Password': serverManager.getActiveServer()?.password || '' } }).then(r => r.json()).then(j => {
         if (Array.isArray(j) && j.length) {
           // mark them as received
           const withDir = j.map(x => Object.assign({}, x, { _direction: 'R' }));
@@ -123,24 +141,38 @@ export default function App() {
   const [channels, setChannels] = useState([])
   const [stats, setStats] = useState(null)
   const [statsLoading, setStatsLoading] = useState(false)
-  const backend = `http://${location.hostname}:3000`
-  const fetchChannels = () => fetch(`${backend}/api/channels`).then(r => r.json()).then(j => setChannels(j)).catch(() => setChannels([]))
-  useEffect(() => { fetchChannels() }, [])
+  const fetchChannels = () => {
+    if (!serverManager.hasServers()) return;
+    fetch(`${getBackend()}/api/channels`, { headers: { 'X-UI-Password': serverManager.getActiveServer()?.password || '' } })
+      .then(r => r.json())
+      .then(j => Array.isArray(j) ? setChannels(j) : setChannels([]))
+      .catch(() => setChannels([]))
+  }
+  useEffect(() => { 
+    if (serverManager.hasServers()) {
+      fetchChannels();
+    }
+  }, [])
 
   const fetchStats = async () => {
+    if (!serverManager.hasServers()) return;
     setStatsLoading(true)
     try {
-      const resp = await fetch(`${backend}/api/digipeater/metrics`)
+      const resp = await fetch(`${getBackend()}/api/digipeater/metrics`, { headers: { 'X-UI-Password': serverManager.getActiveServer()?.password || '' } })
       const j = await resp.json()
       setStats(j)
     } catch (e) { setStats(null) }
     setStatsLoading(false)
   }
-  useEffect(() => { fetchStats() }, [])
+  useEffect(() => { 
+    if (serverManager.hasServers()) {
+      fetchStats();
+    }
+  }, [])
 
   const doReconnect = async (id) => {
     try {
-  await fetch(`${backend}/api/channels/${id}/reconnect`, { method: 'POST' })
+  await fetch(`${getBackend()}/api/channels/${id}/reconnect`, { method: 'POST', headers: { 'X-UI-Password': serverManager.getActiveServer()?.password || '' } })
       fetchChannels()
     } catch (err) { console.warn(err) }
   }
@@ -150,7 +182,7 @@ export default function App() {
       const host = channel.options && channel.options.host
       const port = channel.options && channel.options.port
       if (!host || !port) return
-  const res = await fetch(`${backend}/api/probe`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ host, port }) })
+  const res = await fetch(`${getBackend()}/api/probe`, { method: 'POST', headers: {'Content-Type':'application/json', 'X-UI-Password': serverManager.getActiveServer()?.password || ''}, body: JSON.stringify({ host, port }) })
       const j = await res.json()
       alert(`Probe ${channel.id}: ${j.ok ? 'OK' : 'FAIL'} ${j.error || ''}`)
       fetchChannels()
@@ -158,13 +190,15 @@ export default function App() {
   }
 
   useEffect(() => {
+    if (!serverManager.hasServers()) return; // Don't fetch until server is configured
+    
     const fetchSettings = async () => {
       try {
-        const response = await axios.get(`${backend}/api/bbs/settings`);
+        const response = await axios.get(`${getBackend()}/api/bbs/settings`);
         setBbsEnabled(response.data.enabled);
         // fetch digipeater settings to detect if NWS alerts are enabled
         try {
-          const dd = await axios.get(`${backend}/api/digipeater/settings`);
+          const dd = await axios.get(`${getBackend()}/api/digipeater/settings`);
           if (dd && dd.data && dd.data.nwsAlerts && dd.data.nwsAlerts.enabled) setAlertsEnabled(true)
         } catch (e) {
           // ignore
@@ -176,6 +210,11 @@ export default function App() {
     fetchSettings();
   }, []);
 
+  // Show first-time setup dialog if no servers are configured
+  useEffect(() => {
+    setShowSetup(!serverManager.hasServers())
+  }, [])
+
   return (
     <Box
       sx={{
@@ -184,6 +223,19 @@ export default function App() {
         minHeight: '100vh',
       }}
     >
+      <ServerSetupDialog 
+        open={showSetup} 
+        onComplete={(server) => {
+          try {
+            serverManager.setActiveServer(server.id);
+          } catch (e) { /* already added by dialog */ }
+          setShowSetup(false);
+          // Refresh data now that server is configured
+          fetchChannels();
+          fetchStats();
+        }} 
+      />
+      
       {/* Main content */}
       <Box sx={{ flex: 1 }}>
   <AppBar position="sticky" sx={{ top: 0, zIndex: (theme) => theme.zIndex.appBar }}>
@@ -195,6 +247,7 @@ export default function App() {
             {bbsEnabled && <Button color="inherit" onClick={() => setPage('bbs')}>BBS</Button>}
             {alertsEnabled && <Button color="inherit" onClick={() => setPage('alerts')}>Alerts</Button>}
             <Button color="inherit" onClick={() => setPage('nexnet')}>NexNet</Button>
+            <Button color="inherit" onClick={() => setPage('chat')}>Chat</Button>
             <Button color="inherit" onClick={() => setPage('settings')}>Settings</Button>
           </Toolbar>
         </AppBar>
@@ -365,6 +418,7 @@ export default function App() {
           {page === 'bbs-settings' && <BBSSettings />}
           {page === 'nexnet' && <NexNet setPage={setPage} />}
           {page === 'nexnet-settings' && <NexNetSettings />}
+          {page === 'chat' && <Chat setPage={setPage} />}
         </Container>
       </Box>
 

@@ -2,9 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const { writeJsonAtomicSync } = require('./fileHelpers');
 const { parseAx25Frame, buildAx25Frame } = require('./ax25');
+const ChatSession = require('./chatSession');
 
 class BBSSessionManager {
-  constructor(channelManager, callsign, storagePath, options = {}, bbs = null, messageAlertManager = null) {
+  constructor(channelManager, callsign, storagePath, options = {}, bbs = null, messageAlertManager = null, chatManager = null) {
     this.channelManager = channelManager;
     this.callsign = String(callsign || '').toUpperCase();
     this.storagePath = storagePath || path.join(__dirname, '../data/bbsUsers.json');
@@ -15,6 +16,8 @@ class BBSSessionManager {
     this.frameDelayMs = options.frameDelayMs || 0; // configurable delay between frames
     this.bbs = bbs; // BBS instance
     this.messageAlertManager = messageAlertManager; // Message alert manager
+    this.chatManager = chatManager; // Chat manager for RF chat access
+    this.chatSessions = new Map(); // key: sessionKey -> ChatSession instance
 
     this.channelManager.on('frame', (event) => this.onFrame(event));
   }
@@ -110,6 +113,14 @@ class BBSSessionManager {
 
     if (ctl === 0x43) { // DISC
       this.sendDM(src, chId);
+      
+      // Clean up chat session if in chat mode
+      const chatSession = this.chatSessions.get(key);
+      if (chatSession) {
+        chatSession.disconnect();
+        this.chatSessions.delete(key);
+      }
+      
       this.sessions.delete(key);
       return;
     }
@@ -369,6 +380,12 @@ class BBSSessionManager {
       return;
     }
 
+    // If in chat mode, route to chat session
+    if (sess.state === 'chat-mode') {
+      this.handleChatInput(key, text);
+      return;
+    }
+
     // Basic commands while connected (MVP): BYE to disconnect
     if (/^BYE$/i.test(text) || /^B$/i.test(text)) {
       this.sendDM(remoteCall, channel, '73');
@@ -385,6 +402,7 @@ class BBSSessionManager {
         'R n          - Read message number n',
         'S CALL TEXT  - Send message to callsign',
         'M CALL       - Start composing message to callsign',
+        'C or CHAT    - Enter chat mode (real-time keyboard-to-keyboard)',
         'H or ?       - Help / this menu',
         'B or BYE     - Sign off (73)',
         'Text         - Send text to post as a bulletin'
@@ -398,6 +416,12 @@ class BBSSessionManager {
         // Fallback: single-line prompt
         this.sendI(remoteCall, channel, 'CMD (H = Help)\r\n');
       }
+      return;
+    }
+
+    // Chat command - enter chat mode
+    if (/^(C|CHAT)$/i.test(text.trim())) {
+      this.enterChatMode(remoteCall, channel, key);
       return;
     }
 
@@ -682,6 +706,136 @@ class BBSSessionManager {
   getMessageAlertManager() {
     return this.messageAlertManager;
   }
+
+  /**
+   * Enter chat mode for RF user
+   */
+  enterChatMode(remoteCall, channel, sessionKey) {
+    if (!this.chatManager) {
+      this.sendI(remoteCall, channel, 'Chat system not available.\r\nCMD (H = Help)\r\n');
+      return;
+    }
+
+    try {
+      // Create a ChatSession for this RF user
+      const chatSession = new ChatSession(remoteCall, this.chatManager, {
+        connectionType: 'ax25',
+        channelId: channel
+      });
+
+      // Store the chat session
+      this.chatSessions.set(sessionKey, chatSession);
+
+      // Update BBS session state to chat mode
+      const sess = this.sessions.get(sessionKey);
+      this.sessions.set(sessionKey, { ...sess, state: 'chat-mode' });
+
+      // Set up event handlers to forward chat output to RF
+      chatSession.on('message', (data) => {
+        // Send message to RF user
+        this.sendI(remoteCall, channel, data.text + '\r\n');
+      });
+
+      chatSession.on('broadcast', (data) => {
+        // Format and send broadcast message
+        const prefix = data.fromCallsign ? `[${data.fromCallsign}] ` : '';
+        this.sendI(remoteCall, channel, prefix + data.text + '\r\n');
+      });
+
+      chatSession.on('private-message', (data) => {
+        // Format and send private message
+        this.sendI(remoteCall, channel, `[PM from ${data.fromCallsign}] ${data.text}\r\n`);
+      });
+
+      chatSession.on('disconnect', () => {
+        // User left chat, return to BBS
+        this.exitChatMode(sessionKey, remoteCall, channel);
+      });
+
+      // Send welcome message
+      const welcome = [
+        '=== NexDigi Chat System ===',
+        'Type /help for commands',
+        'Type /join LOBBY to join the main room',
+        'Type /quit to return to BBS',
+        '==========================='
+      ].join('\r\n');
+      
+      this.sendI(remoteCall, channel, welcome + '\r\n');
+
+      try {
+        if (process.env.NEXDIGI_DEBUG) {
+          console.log('[BBS] ' + remoteCall + ' entered chat mode on channel ' + channel);
+        }
+      } catch (e) {}
+
+    } catch (e) {
+      console.error('[BBS] Error entering chat mode:', e);
+      this.sendI(remoteCall, channel, 'Error entering chat mode.\r\nCMD (H = Help)\r\n');
+    }
+  }
+
+  /**
+   * Handle input while in chat mode
+   */
+  handleChatInput(sessionKey, text) {
+    const chatSession = this.chatSessions.get(sessionKey);
+    
+    if (!chatSession) {
+      // Session lost, return to BBS
+      const sess = this.sessions.get(sessionKey);
+      if (sess) {
+        this.sessions.set(sessionKey, { ...sess, state: 'connected' });
+        this.sendI(sess.remote, sess.channel, 'Chat session lost. Returned to BBS.\r\nCMD (H = Help)\r\n');
+      }
+      return;
+    }
+
+    try {
+      // Route the text to the chat session
+      chatSession.handleMessage(text);
+    } catch (e) {
+      console.error('[BBS] Error handling chat input:', e);
+      const sess = this.sessions.get(sessionKey);
+      if (sess) {
+        this.sendI(sess.remote, sess.channel, 'Chat error. Type /quit to return to BBS.\r\n');
+      }
+    }
+  }
+
+  /**
+   * Exit chat mode and return to BBS
+   */
+  exitChatMode(sessionKey, remoteCall, channel) {
+    try {
+      // Clean up chat session
+      const chatSession = this.chatSessions.get(sessionKey);
+      if (chatSession) {
+        chatSession.disconnect();
+        this.chatSessions.delete(sessionKey);
+      }
+
+      // Update BBS session state
+      const sess = this.sessions.get(sessionKey);
+      if (sess) {
+        this.sessions.set(sessionKey, { ...sess, state: 'connected' });
+      }
+
+      // Send confirmation
+      this.sendI(remoteCall, channel, '\r\n=== Returned to BBS ===\r\nCMD (H = Help)\r\n');
+
+      try {
+        if (process.env.NEXDIGI_DEBUG) {
+          console.log('[BBS] ' + remoteCall + ' exited chat mode on channel ' + channel);
+        }
+      } catch (e) {}
+
+    } catch (e) {
+      console.error('[BBS] Error exiting chat mode:', e);
+    }
+  }
 }
+
+module.exports = BBSSessionManager;
 
 module.exports = BBSSessionManager;
