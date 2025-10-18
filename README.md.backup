@@ -358,18 +358,29 @@ The default `server/config.json` includes:
 
 - **CPU:** Dual core, 2+ GHz```bash
 
-- **RAM:** 2 GB
-- **Storage:** 2 GB (for logs and message history)
-- **Network:** 10 Mbps+ for NexNet internet links
+- **RAM:** 2 GBnpm install
+
+- **Storage:** 2 GB (for logs and message history)cd client && npm install && cd ..
+
+- **Network:** 10 Mbps+ for NexNet internet linksnpm run dev
+
+```
 
 ### Hardware Support
 
-- **Serial TNCs:** Any KISS TNC via USB or serial port
+- **Serial TNCs:** Any KISS TNC via USB or serial portServer runs on port 3000, client on Vite default 5173.
+
 - **KISS-TCP:** Direwolf, SoundModem, other KISS servers
-- **AGW Protocol:** SoundModem, AGWPE
+
+- **AGW Protocol:** SoundModem, AGWPE## Installation
+
 - **Mock Mode:** No hardware required for testing
 
+NexDigi supports automated installation on Debian/Ubuntu Linux and Windows. The installers handle system dependencies, Node.js installation, and service setup automatically.
+
 ---
+
+### Debian / Ubuntu (Recommended)
 
 ## 🛠️ Service Management
 
@@ -378,57 +389,109 @@ The default `server/config.json` includes:
 ### Linux (systemd)
 
 ```bash
-# Start/stop service
-sudo systemctl start nexdigi
-sudo systemctl stop nexdigi
 
-# Enable/disable autostart
-sudo systemctl enable nexdigi
-sudo systemctl disable nexdigi
+```bashgit clone https://github.com/na4wx/NexDigi.git
 
-# View logs
-journalctl -u nexdigi -f
+# Start/stop servicecd NexDigi
 
-# Restart after config changes
+sudo systemctl start nexdigisudo bash deploy/install-debian.sh
+
+sudo systemctl stop nexdigi```
+
+
+
+# Enable/disable autostartThis installer will:
+
+sudo systemctl enable nexdigi- Install system packages (build tools, Node.js via NodeSource if needed)
+
+sudo systemctl disable nexdigi- Create a `nexdigi` system user with serial port access
+
+- Back up any existing installation to `/opt/nexdigi.bak.TIMESTAMP`
+
+# View logs- Install NexDigi to `/opt/nexdigi` with production dependencies
+
+journalctl -u nexdigi -f- Set up and start the systemd service
+
+
+
+# Restart after config changes**Skip system provisioning** (if you already have Node.js and build tools):
+
 sudo systemctl restart nexdigi
 
-# Check status
-systemctl status nexdigi
+```bash
+
+# Check statussudo bash deploy/install-debian.sh --no-provision
+
+systemctl status nexdigi```
+
 ```
+
+**Check logs and status:**
 
 ### Windows
 
-```powershell
-# Start/stop service
-Start-Service NexDigi
-Stop-Service NexDigi
+```bash
 
-# Restart
+```powershell# View logs
+
+# Start/stop servicejournalctl -u nexdigi -f
+
+Start-Service NexDigi
+
+Stop-Service NexDigi# Check service status
+
+systemctl status nexdigi
+
+# Restart```
+
 Restart-Service NexDigi
 
-# View status
-Get-Service NexDigi
+### Windows
 
-# View logs
-Get-Content "C:\NexDigi\nexdigi.log" -Tail 50 -Wait
-```
+# View status
+
+Get-Service NexDigi**Automated service install:**
+
+
+
+# View logs (Event Viewer or log file)```powershell
+
+Get-Content "C:\NexDigi\logs\nexdigi.log" -Tail 50 -Wait# Clone repository first
+
+```git clone https://github.com/na4wx/NexDigi.git
+
+cd NexDigi
 
 ---
 
-## 🔐 Security
+# Install Node.js dependencies
+
+## 🔐 Securitynpm install
+
+cd client && npm install && cd ..
 
 ### UI Authentication
 
-NexDigi requires password authentication for web UI access. Set your password in `server/config.json`:
+NexDigi requires password authentication for web UI access. Set your password in `server/config.json`:# Install as Windows service (run in elevated PowerShell)
 
-```json
+powershell -ExecutionPolicy Bypass -File .\deploy\install-windows-service.ps1
+
+```json```
+
 {
-  "uiPassword": "your-secure-password-here"
-}
-```
 
-**Important Notes:**
-- RF traffic (APRS, AX.25) does NOT require the UI password
+  "uiPassword": "your-secure-password-here"**Development mode:**
+
+}
+
+``````powershell
+
+# Run server and client in development
+
+**Important Notes:**npm run dev
+
+- RF traffic (APRS, AX.25) does NOT require the UI password```
+
 - NexNet mesh communications use separate cryptographic authentication
 
 - APRS-IS and Winlink connections use their own credentials### Configuration
