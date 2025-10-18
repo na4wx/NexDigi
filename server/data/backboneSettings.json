@@ -16,7 +16,7 @@
       "mode": "mesh",
       "port": 14240,
       "bindAddress": "0.0.0.0",
-      "tls": true,
+      "tls": false,
       "tlsOptions": {
         "comment": "You must provide key and cert paths for TLS",
         "key": null,

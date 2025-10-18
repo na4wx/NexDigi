@@ -1,4 +1,47 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
+import {
+  Box,
+  Paper,
+  Typography,
+  Button,
+  Grid,
+  Card,
+  CardContent,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Chip,
+  CircularProgress,
+  Alert,
+  Divider,
+  List,
+  ListItem,
+  ListItemText,
+  ListItemIcon,
+  IconButton,
+  Tooltip
+} from '@mui/material';
+import {
+  Settings as SettingsIcon,
+  CloudOff as CloudOffIcon,
+  Cloud as CloudIcon,
+  Router as RouterIcon,
+  People as PeopleIcon,
+  Wifi as WifiIcon,
+  Storage as StorageIcon,
+  Speed as SpeedIcon,
+  Refresh as RefreshIcon,
+  CheckCircle as CheckCircleIcon,
+  Cancel as CancelIcon,
+  Hub as HubIcon,
+  Cast as CastIcon,
+  NetworkCheck as NetworkCheckIcon
+} from '@mui/icons-material';
+
+const API_BASE = `http://${window.location.hostname}:3000`;
 
 export default function NexNet({ setPage }) {
   const [status, setStatus] = useState(null);
@@ -16,7 +59,7 @@ export default function NexNet({ setPage }) {
 
   const fetchStatus = async () => {
     try {
-      const res = await fetch('/api/backbone/status');
+      const res = await fetch(`${API_BASE}/api/backbone/status`);
       const data = await res.json();
       setStatus(data);
       setError(null);
@@ -30,7 +73,7 @@ export default function NexNet({ setPage }) {
 
   const fetchConfig = async () => {
     try {
-      const res = await fetch('/api/backbone/config');
+      const res = await fetch(`${API_BASE}/api/backbone/config`);
       const data = await res.json();
       setConfig(data);
     } catch (err) {
@@ -44,7 +87,7 @@ export default function NexNet({ setPage }) {
     setSaving(true);
     try {
       const newConfig = { ...config, enabled: !config.enabled };
-      const res = await fetch('/api/backbone/config', {
+      const res = await fetch(`${API_BASE}/api/backbone/config`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newConfig)
@@ -90,290 +133,482 @@ export default function NexNet({ setPage }) {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-4">NexNet</h1>
-        <p>Loading...</p>
-      </div>
+      <Box sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '400px' }}>
+        <CircularProgress size={60} />
+      </Box>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6">
-        <h1 className="text-2xl font-bold mb-4">NexNet</h1>
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded">
+      <Box sx={{ p: 3 }}>
+        <Alert severity="error" sx={{ mb: 2 }}>
           {error}
-        </div>
-      </div>
+        </Alert>
+        <Button
+          variant="contained"
+          startIcon={<RefreshIcon />}
+          onClick={() => {
+            setLoading(true);
+            fetchStatus();
+            fetchConfig();
+          }}
+        >
+          Retry
+        </Button>
+      </Box>
     );
   }
 
   return (
-    <div className="p-6">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold">NexNet</h1>
-        <div className="flex gap-2">
-          <button
+    <Box sx={{ p: 3, maxWidth: 1400, mx: 'auto' }}>
+      {/* Header */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
+        <Box>
+          <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'primary.main', display: 'flex', alignItems: 'center', gap: 1 }}>
+            <RouterIcon fontSize="large" />
+            NexNet
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Mesh networking for distributed NexDigi nodes
+          </Typography>
+        </Box>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Tooltip title="Refresh Status">
+            <IconButton
+              onClick={() => {
+                fetchStatus();
+                fetchConfig();
+              }}
+              color="primary"
+            >
+              <RefreshIcon />
+            </IconButton>
+          </Tooltip>
+          <Button
+            variant="outlined"
+            startIcon={<SettingsIcon />}
             onClick={() => setPage && setPage('nexnet-settings')}
-            className="px-4 py-2 bg-gray-500 hover:bg-gray-600 text-white rounded"
           >
-            ⚙️ Settings
-          </button>
+            Settings
+          </Button>
           {config && (
-            <button
+            <Button
+              variant="contained"
+              color={config.enabled ? 'error' : 'success'}
               onClick={handleEnableToggle}
               disabled={saving}
-              className={`px-4 py-2 rounded ${
-                config.enabled
-                  ? 'bg-red-500 hover:bg-red-600 text-white'
-                  : 'bg-green-500 hover:bg-green-600 text-white'
-              } ${saving ? 'opacity-50 cursor-not-allowed' : ''}`}
+              startIcon={config.enabled ? <CloudOffIcon /> : <CloudIcon />}
             >
               {saving ? 'Saving...' : config.enabled ? 'Disable' : 'Enable'}
-            </button>
+            </Button>
           )}
-        </div>
-      </div>
+        </Box>
+      </Box>
 
-      {/* Status Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Status</h3>
-          <p className={`text-2xl font-bold ${status?.enabled ? 'text-green-600' : 'text-gray-400'}`}>
-            {status?.enabled ? 'Enabled' : 'Disabled'}
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Mode</h3>
-          <p className="text-2xl font-bold text-purple-600">
-            {status?.transports?.internet?.mode ? 
-              <span className={`px-3 py-1 text-lg rounded ${
-                status.transports.internet.mode === 'server' ? 'bg-green-100 text-green-800' :
-                status.transports.internet.mode === 'client' ? 'bg-blue-100 text-blue-800' :
-                'bg-purple-100 text-purple-800'
-              }`}>
-                {status.transports.internet.mode === 'server' ? '🌐 Hub' :
-                 status.transports.internet.mode === 'client' ? '📡 Client' :
-                 '🔗 Mesh'}
-              </span>
-            : 'N/A'}
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Neighbors</h3>
-          <p className="text-2xl font-bold text-blue-600">
-            {status?.neighbors?.length || 0}
-          </p>
-        </div>
-        <div className="bg-white p-4 rounded-lg shadow">
-          <h3 className="text-sm font-semibold text-gray-600 mb-2">Callsign</h3>
-          <p className="text-2xl font-bold text-gray-800">
-            {status?.localCallsign || 'N/A'}
-          </p>
-        </div>
-      </div>
+      {/* Status Overview Cards */}
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card elevation={3}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                  Status
+                </Typography>
+                {status?.enabled ? (
+                  <CheckCircleIcon color="success" />
+                ) : (
+                  <CancelIcon color="disabled" />
+                )}
+              </Box>
+              <Typography variant="h4" sx={{ fontWeight: 'bold', color: status?.enabled ? 'success.main' : 'text.disabled' }}>
+                {status?.enabled ? 'Enabled' : 'Disabled'}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} sm={6} md={3}>
+          <Card elevation={3}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                  Mode
+                </Typography>
+                {status?.transports?.internet?.mode === 'server' ? <HubIcon color="primary" /> :
+                 status?.transports?.internet?.mode === 'client' ? <CastIcon color="primary" /> :
+                 <NetworkCheckIcon color="primary" />}
+              </Box>
+              {status?.transports?.internet?.mode ? (
+                <Chip
+                  label={status.transports.internet.mode === 'server' ? 'Hub' :
+                         status.transports.internet.mode === 'client' ? 'Client' : 'Mesh'}
+                  color={status.transports.internet.mode === 'server' ? 'success' :
+                         status.transports.internet.mode === 'client' ? 'primary' : 'secondary'}
+                  sx={{ fontWeight: 'bold', fontSize: '1.1rem', height: 36 }}
+                />
+              ) : (
+                <Typography variant="h5" color="text.disabled">N/A</Typography>
+              )}
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} sm={6} md={3}>
+          <Card elevation={3}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                  Neighbors
+                </Typography>
+                <PeopleIcon color="primary" />
+              </Box>
+              <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                {status?.neighbors?.length || 0}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {status?.neighbors?.length === 1 ? 'Connected node' : 'Connected nodes'}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} sm={6} md={3}>
+          <Card elevation={3}>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                  Callsign
+                </Typography>
+                <WifiIcon color="primary" />
+              </Box>
+              <Typography variant="h5" sx={{ fontWeight: 'bold', fontFamily: 'monospace' }}>
+                {status?.localCallsign || 'N/A'}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Local node identifier
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
 
       {/* Hub Connection Status (Client Mode) */}
       {status?.enabled && status?.transports?.internet?.mode === 'client' && (
-        <div className="mb-6">
-          <h2 className="text-xl font-bold mb-3">Hub Connection</h2>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Hub Callsign</h3>
-                <p className="text-lg font-medium text-gray-900">
-                  {status.transports.internet.hubCallsign || 'Not connected'}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Connection Status</h3>
-                <span className={`px-3 py-1 text-sm font-semibold rounded-full ${
-                  status.transports.internet.connected ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                }`}>
-                  {status.transports.internet.connected ? '✓ Connected' : '✗ Disconnected'}
-                </span>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Hub Address</h3>
-                <p className="text-sm text-gray-700 font-mono">
-                  {config?.transports?.internet?.hubServer?.host || 'N/A'}:
-                  {config?.transports?.internet?.hubServer?.port || 'N/A'}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CastIcon /> Hub Connection
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={4}>
+              <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                Hub Callsign
+              </Typography>
+              <Typography variant="h6" sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
+                {status.transports.internet.hubCallsign || 'Not connected'}
+              </Typography>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                Connection Status
+              </Typography>
+              <Box sx={{ mt: 0.5 }}>
+                <Chip
+                  label={status.transports.internet.connected ? 'Connected' : 'Disconnected'}
+                  color={status.transports.internet.connected ? 'success' : 'error'}
+                  icon={status.transports.internet.connected ? <CheckCircleIcon /> : <CancelIcon />}
+                  size="medium"
+                />
+              </Box>
+            </Grid>
+            <Grid item xs={12} md={4}>
+              <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase', fontWeight: 600 }}>
+                Hub Address
+              </Typography>
+              <Typography variant="body2" sx={{ fontFamily: 'monospace', mt: 0.5 }}>
+                {config?.transports?.internet?.hubServer?.host || 'N/A'}:
+                {config?.transports?.internet?.hubServer?.port || 'N/A'}
+              </Typography>
+            </Grid>
+          </Grid>
+        </Paper>
       )}
 
       {/* Hub Statistics (Server Mode) */}
       {status?.enabled && status?.transports?.internet?.mode === 'server' && (
-        <div className="mb-6">
-          <h2 className="text-xl font-bold mb-3">Hub Statistics</h2>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Connected Clients</h3>
-                <p className="text-3xl font-bold text-blue-600">
-                  {status.transports.internet.connectedClients || 0}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Packets Relayed</h3>
-                <p className="text-3xl font-bold text-green-600">
-                  {status.transports.internet.packetsRelayed || 0}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Total Bandwidth</h3>
-                <p className="text-lg font-medium text-gray-700">
-                  ↑ {formatBytes(status.transports.internet.bytesSent || 0)}<br/>
-                  ↓ {formatBytes(status.transports.internet.bytesReceived || 0)}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-gray-600 mb-1">Uptime</h3>
-                <p className="text-lg font-medium text-gray-700">
-                  {formatUptime(status.transports.internet.uptime || 0)}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+            <HubIcon /> Hub Statistics
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
+                    Connected Clients
+                  </Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'primary.main' }}>
+                    {status.transports.internet.connectedClients || 0}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
+                    Packets Relayed
+                  </Typography>
+                  <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'success.main' }}>
+                    {status.transports.internet.packetsRelayed || 0}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
+                    Bandwidth
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                    ↑ {formatBytes(status.transports.internet.bytesSent || 0)}
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                    ↓ {formatBytes(status.transports.internet.bytesReceived || 0)}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="caption" color="text.secondary" sx={{ textTransform: 'uppercase' }}>
+                    Uptime
+                  </Typography>
+                  <Typography variant="h6" sx={{ fontWeight: 'medium' }}>
+                    {formatUptime(status.transports.internet.uptime || 0)}
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+          </Grid>
+        </Paper>
       )}
 
       {/* Transports */}
       {status?.enabled && (
-        <div className="mb-6">
-          <h2 className="text-xl font-bold mb-3">Transports</h2>
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <table className="min-w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">MTU</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">TX/RX</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+        <Paper elevation={2} sx={{ mb: 3 }}>
+          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <StorageIcon /> Transports
+            </Typography>
+          </Box>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Type</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Status</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Cost</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>MTU</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>TX/RX</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {Object.entries(status?.transports || {}).map(([id, transport]) => (
-                  <tr key={id}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="text-sm font-medium text-gray-900 uppercase">{id}</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                        transport.connected ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'
-                      }`}>
-                        {transport.connected ? 'Connected' : 'Disconnected'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{transport.metrics?.cost || 'N/A'}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{transport.metrics?.mtu || 'N/A'}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <TableRow key={id} hover>
+                    <TableCell>
+                      <Typography variant="body2" sx={{ fontWeight: 'medium', textTransform: 'uppercase', fontFamily: 'monospace' }}>
+                        {id}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={transport.connected ? 'Connected' : 'Disconnected'}
+                        color={transport.connected ? 'success' : 'default'}
+                        size="small"
+                      />
+                    </TableCell>
+                    <TableCell>{transport.metrics?.cost || 'N/A'}</TableCell>
+                    <TableCell>{transport.metrics?.mtu || 'N/A'}</TableCell>
+                    <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
                       {transport.metrics?.packetsSent || 0} / {transport.metrics?.packetsReceived || 0}
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       )}
 
       {/* Neighbors */}
       {status?.enabled && status?.neighbors && status.neighbors.length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-xl font-bold mb-3">Neighbors</h2>
-          <div className="bg-white rounded-lg shadow overflow-hidden">
-            <table className="min-w-full">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Callsign</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Transports</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Services</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Seen</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
+        <Paper elevation={2} sx={{ mb: 3 }}>
+          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <PeopleIcon /> Neighbors
+            </Typography>
+          </Box>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Callsign</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Transports</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Services</TableCell>
+                  <TableCell sx={{ fontWeight: 'bold' }}>Last Seen</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
                 {status.neighbors.map((neighbor) => (
-                  <tr key={neighbor.callsign}>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-gray-900">{neighbor.callsign}</span>
+                  <TableRow key={neighbor.callsign} hover>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" sx={{ fontWeight: 'medium', fontFamily: 'monospace' }}>
+                          {neighbor.callsign}
+                        </Typography>
                         {neighbor.viaHub && (
-                          <span className="px-2 py-0.5 text-xs bg-purple-100 text-purple-700 rounded" title="Learned via hub">
-                            via hub
-                          </span>
+                          <Chip label="via hub" size="small" color="secondary" variant="outlined" />
                         )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex gap-1">
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                         {neighbor.transports.map(t => (
-                          <span key={t} className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded uppercase">
-                            {t}
-                          </span>
+                          <Chip key={t} label={t.toUpperCase()} size="small" color="primary" variant="outlined" />
                         ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex flex-wrap gap-1">
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
                         {neighbor.services.map(s => (
-                          <span key={s} className="px-2 py-1 text-xs bg-green-100 text-green-800 rounded">
-                            {s}
-                          </span>
+                          <Chip key={s} label={s} size="small" color="success" variant="outlined" />
                         ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {formatLastSeen(neighbor.lastSeenAgo)}
-                    </td>
-                  </tr>
+                      </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2" color="text.secondary">
+                        {formatLastSeen(neighbor.lastSeenAgo)}
+                      </Typography>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
       )}
 
       {/* Services */}
       {status?.enabled && status?.services && Object.keys(status.services).length > 0 && (
-        <div className="mb-6">
-          <h2 className="text-xl font-bold mb-3">Available Services</h2>
-          <div className="bg-white rounded-lg shadow p-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {Object.entries(status.services).map(([service, providers]) => (
-                <div key={service} className="border rounded p-3">
-                  <h3 className="font-semibold text-gray-700 mb-2">{service}</h3>
-                  <div className="text-sm text-gray-600">
-                    {providers.length} provider{providers.length !== 1 ? 's' : ''}:
-                    <ul className="mt-1 ml-4 list-disc">
+        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" sx={{ mb: 2, fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 1 }}>
+            <SpeedIcon /> Available Services
+          </Typography>
+          <Grid container spacing={2}>
+            {Object.entries(status.services).map(([service, providers]) => (
+              <Grid item xs={12} sm={6} md={4} key={service}>
+                <Card variant="outlined">
+                  <CardContent>
+                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1 }}>
+                      {service}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {providers.length} provider{providers.length !== 1 ? 's' : ''}
+                    </Typography>
+                    <List dense>
                       {providers.map(p => (
-                        <li key={p}>{p}</li>
+                        <ListItem key={p} disablePadding>
+                          <ListItemIcon sx={{ minWidth: 30 }}>
+                            <CheckCircleIcon fontSize="small" color="success" />
+                          </ListItemIcon>
+                          <ListItemText 
+                            primary={p}
+                            primaryTypographyProps={{ variant: 'body2', fontFamily: 'monospace' }}
+                          />
+                        </ListItem>
                       ))}
-                    </ul>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+                    </List>
+                  </CardContent>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
+        </Paper>
       )}
 
-      {/* Configuration Info */}
+      {/* Getting Started (when disabled) */}
       {!status?.enabled && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <h3 className="font-semibold text-blue-900 mb-2">Getting Started</h3>
-          <p className="text-sm text-blue-800 mb-2">
-            NexNet allows multiple NexDigi nodes to connect and share data via RF and/or Internet using advanced mesh networking with QoS, load balancing, and self-healing capabilities.
-          </p>
-          <p className="text-sm text-blue-800">
-            To enable NexNet, configure your settings and click the Enable button above. You'll need to restart the server for changes to take effect.
-          </p>
-        </div>
+        <Paper 
+          elevation={3}
+          sx={{ 
+            p: 4, 
+            background: 'linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%)',
+            border: 2,
+            borderColor: 'primary.light'
+          }}
+        >
+          <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start' }}>
+            <RouterIcon sx={{ fontSize: 60, color: 'primary.main' }} />
+            <Box sx={{ flex: 1 }}>
+              <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.dark', mb: 2 }}>
+                Getting Started with NexNet
+              </Typography>
+              <List>
+                <ListItem>
+                  <ListItemIcon><CheckCircleIcon color="primary" /></ListItemIcon>
+                  <ListItemText 
+                    primary="Connect Multiple Nodes"
+                    secondary="NexNet enables distributed NexDigi installations to communicate via RF and/or Internet"
+                  />
+                </ListItem>
+                <ListItem>
+                  <ListItemIcon><CheckCircleIcon color="primary" /></ListItemIcon>
+                  <ListItemText 
+                    primary="Advanced Routing"
+                    secondary="Features QoS, load balancing, and automatic failover for reliable connections"
+                  />
+                </ListItem>
+                <ListItem>
+                  <ListItemIcon><CheckCircleIcon color="primary" /></ListItemIcon>
+                  <ListItemText 
+                    primary="Service Discovery"
+                    secondary="Automatically find and connect to BBS, chat, and other services on the network"
+                  />
+                </ListItem>
+                <ListItem>
+                  <ListItemIcon><CheckCircleIcon color="primary" /></ListItemIcon>
+                  <ListItemText 
+                    primary="Multiple Modes"
+                    secondary="Run as a Hub (server), Client, or Mesh node depending on your network topology"
+                  />
+                </ListItem>
+              </List>
+              <Paper elevation={1} sx={{ p: 2, mt: 2, bgcolor: 'rgba(255,255,255,0.8)' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <SettingsIcon fontSize="small" /> Quick Setup
+                </Typography>
+                <List dense>
+                  <ListItem>
+                    <ListItemText primary="1. Click Settings button above" />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="2. Configure your callsign and choose a mode (Hub/Client/Mesh)" />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="3. Click Enable button and restart the server" />
+                  </ListItem>
+                  <ListItem>
+                    <ListItemText primary="4. Return here to monitor connections and status" />
+                  </ListItem>
+                </List>
+              </Paper>
+            </Box>
+          </Box>
+        </Paper>
       )}
-    </div>
+    </Box>
   );
 }

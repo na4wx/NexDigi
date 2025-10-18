@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
+const path = require('path');
 const ChannelManager = require('./lib/channelManager');
 const MockAdapter = require('./lib/adapters/mockAdapter');
 const BBS = require('./lib/bbs');
@@ -13,12 +14,16 @@ const MessageAlertManager = require('./lib/messageAlertManager');
 const BackboneManager = require('./lib/backbone/BackboneManager');
 const bbs = new BBS();
 const WinlinkManager = require('./lib/winlinkManager');
+const ChatManager = require('./lib/chatManager');
+const ChatHistoryManager = require('./lib/chatHistoryManager');
 let aprsMessageHandler = null;
 let bbsSessionManager = null;
 let lookupHandler = null;
 let beaconScheduler = null;
 let messageAlertManager = null;
 let backboneManager = null;
+let chatManager = null;
+let chatHistoryManager = null;
 
 const app = express();
 // Apply digipeater settings (routes + per-channel options) to runtime
@@ -133,7 +138,6 @@ wss.on('error', (err) => {
 });
 
 const fs = require('fs');
-const path = require('path');
 const { writeJsonAtomicSync } = require('./lib/fileHelpers');
 
 const CONFIG_PATH = path.join(__dirname, 'config.json');
@@ -434,6 +438,25 @@ try {
   backboneManager = null;
 }
 
+// Initialize ChatManager (keyboard-to-keyboard chat)
+try {
+  // Create ChatHistoryManager for persistent chat storage
+  chatHistoryManager = new ChatHistoryManager(
+    path.join(__dirname, 'data', 'chatHistory.json'),
+    {
+      retentionDays: 7,
+      maxMessagesPerRoom: 1000
+    }
+  );
+  console.log('ChatHistoryManager created');
+
+  chatManager = new ChatManager(manager, { historyManager: chatHistoryManager });
+  console.log('ChatManager created with history persistence');
+} catch (e) {
+  console.error('Failed to create ChatManager:', e);
+  chatManager = null;
+}
+
 function createAdapterForChannel(c) {
   if (!c || !c.type) return null;
   if (c.type === 'mock') return new MockAdapter(c.id);
@@ -578,7 +601,8 @@ const updateBBSSettings = (newSettings) => {
         path.join(__dirname, 'data', 'bbsUsers.json'), 
         { allowedChannels: allowed, frameDelayMs },
         bbs, // Pass BBS instance
-        messageAlertManager // Pass message alert manager
+        messageAlertManager, // Pass message alert manager
+        chatManager // Pass chat manager for RF chat access
       );
       console.log(`BBS connected-mode handler initialized for ${bbsSettings.callsign}${frameDelayMs > 0 ? ` (frame delay: ${frameDelayMs}ms)` : ''}`);
       
@@ -631,6 +655,9 @@ const dependencies = {
 // expose winlink manager instance (may be null until initialized)
 dependencies.winlinkManager = winlinkManager;
 
+// expose chatManager
+dependencies.chatManager = chatManager;
+
 // expose lastHeard via dependencies
 dependencies.lastHeard = lastHeard;
 // expose metric alerts management
@@ -645,6 +672,13 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Auth routes MUST be mounted before authentication middleware
+app.use('/api/auth', require('./routes/auth'));
+
+// Authentication middleware (applied to protected routes)
+const { authenticate } = require('./middleware/auth');
+app.use('/api', authenticate);
 
 app.use('/api/channels', channelsRoutes(dependencies));
 app.use('/api/lastheard', require('./routes/lastheard')(dependencies));
@@ -669,12 +703,40 @@ try {
 } catch (e) {
   console.error('Failed to mount nexnet routes', e);
 }
+// Chat routes
+let chatWebSocketHandlers = null;
+try {
+  const chatRoutes = require('./routes/chat');
+  const chatRouter = chatRoutes({...dependencies, chatManager, wsServer: wss});
+  app.use('/api/chat', chatRouter);
+  chatWebSocketHandlers = chatRouter.chatWebSocketHandlers;
+  console.log('Chat routes mounted, WebSocket handlers:', !!chatWebSocketHandlers);
+} catch (e) {
+  console.error('Failed to mount chat routes', e);
+}
 
 // Expose current digipeaterSettings to route handlers that access req.app.locals
 app.locals.digipeaterSettings = digipeaterSettings;
 
 // WebSocket: stream frames and commands
-wss.on('connection', (ws) => {
+const { verifyWebSocketAuth } = require('./middleware/auth');
+
+wss.on('connection', (ws, req) => {
+  // Extract password from query string or headers
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const password = url.searchParams.get('password') || req.headers['x-ui-password'];
+  
+  // Verify authentication for UI WebSocket connections
+  // Skip for backbone/node connections
+  const userAgent = req.headers['user-agent'] || '';
+  const isNodeConnection = userAgent.includes('NexDigi-Node') || req.headers['x-nexdigi-node'];
+  
+  if (!isNodeConnection && !verifyWebSocketAuth(password)) {
+    ws.close(1008, 'Authentication required'); // Policy Violation
+    console.warn('WebSocket connection rejected: Invalid or missing password');
+    return;
+  }
+  
   // send current channels
   ws.send(JSON.stringify({ type: 'channels', data: manager.listChannels() }));
   
@@ -706,13 +768,29 @@ wss.on('connection', (ws) => {
   ws.on('message', (msg) => {
     try {
       const payload = JSON.parse(msg.toString());
+      
+      // Handle chat messages if chat is enabled
+      if (chatWebSocketHandlers && payload.type && payload.type.startsWith('chat-')) {
+        chatWebSocketHandlers.handleChatMessage(ws, payload);
+        return;
+      }
+      
+      // Handle regular frame sending
       if (payload.type === 'send' && payload.channel && payload.frame) {
         manager.sendFrame(payload.channel, Buffer.from(payload.frame, 'hex'));
       }
     } catch (err) { /* ignore */ }
   });
 
-  ws.on('close', () => { manager.off('frame', onFrame); manager.off('tx', onTx); });
+  ws.on('close', () => { 
+    manager.off('frame', onFrame); 
+    manager.off('tx', onTx);
+    
+    // Handle chat disconnect
+    if (chatWebSocketHandlers) {
+      chatWebSocketHandlers.handleDisconnect(ws);
+    }
+  });
 });
 
 const PORT = process.env.PORT || 3000;
@@ -747,6 +825,12 @@ function shutdown(reason) {
       backboneManager.shutdown().catch(e => console.error('Backbone shutdown error:', e)); 
     } 
   } catch (e) { console.error('Backbone shutdown error:', e); }
+  try {
+    if (chatHistoryManager) {
+      console.log('Shutting down chat history manager...');
+      chatHistoryManager.shutdown();
+    }
+  } catch (e) { console.error('Chat history shutdown error:', e); }
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));
