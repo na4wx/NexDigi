@@ -1,0 +1,120 @@
+{
+  "uiPassword": "MySecurePassword123!",
+  "callsign": "N0CALL-5",
+  "passcode": "12345",
+  "channels": [
+    {
+      "id": "vhf",
+      "type": "serial",
+      "enabled": true,
+      "port": "/dev/ttyUSB0",
+      "baudRate": 9600,
+      "description": "2m APRS",
+      "digipeater": {
+        "enabled": true,
+        "mode": "wide1-1",
+        "maxHops": 7,
+        "rateLimit": 30,
+        "beacon": {
+          "enabled": true,
+          "interval": 1800,
+          "message": "!3612.00N/08647.00W-NexDigi Full-Featured Node",
+          "path": "WIDE1-1"
+        }
+      }
+    },
+    {
+      "id": "uhf",
+      "type": "kiss-tcp",
+      "enabled": true,
+      "host": "localhost",
+      "port": 8001,
+      "description": "70cm Packet",
+      "digipeater": {
+        "enabled": true,
+        "mode": "widen-n",
+        "maxHops": 5,
+        "rateLimit": 20
+      }
+    },
+    {
+      "id": "soundmodem",
+      "type": "soundmodem",
+      "enabled": true,
+      "host": "localhost",
+      "port": 8100,
+      "description": "Soundmodem HF"
+    }
+  ],
+  "igate": {
+    "enabled": true,
+    "server": "rotate.aprs2.net",
+    "port": 14580,
+    "useTLS": true,
+    "filter": "r/36.1699/-86.7842/100 p/WX p/APZ p/APU p/APX",
+    "rateLimit": 15,
+    "bidirectional": true,
+    "localRepeats": true
+  },
+  "bbs": {
+    "enabled": true,
+    "maxMessagesPerUser": 100,
+    "retentionDays": 180,
+    "winlinkGateway": {
+      "enabled": true,
+      "targetCallsign": "WLNK-1"
+    }
+  },
+  "nexnet": {
+    "enabled": true,
+    "callsign": "N0CALL-5",
+    "mode": "mesh",
+    "keyFile": "nexnet_key.pem",
+    "peers": [
+      {
+        "callsign": "N1NODE-1",
+        "address": "node1.example.com:4000",
+        "trusted": true
+      },
+      {
+        "callsign": "N2NODE-1",
+        "address": "node2.example.com:4000",
+        "trusted": true
+      },
+      {
+        "callsign": "N3NODE-1",
+        "address": "192.168.1.103:4000",
+        "trusted": false
+      }
+    ],
+    "listenPort": 4000,
+    "routing": {
+      "algorithm": "dijkstra",
+      "lsaInterval": 300,
+      "hopLimit": 10,
+      "qos": {
+        "enabled": true,
+        "levels": 4
+      }
+    },
+    "syncBBS": true,
+    "syncChat": true,
+    "syncWeather": true
+  },
+  "weatherAlerts": {
+    "enabled": true,
+    "sameCodes": ["026081", "026083", "026093"],
+    "checkInterval": 300,
+    "distributeViaAPRS": true,
+    "distributeViaNexNet": true,
+    "alertPriority": "high"
+  },
+  "metrics": {
+    "enabled": true,
+    "retentionHours": 720,
+    "alerts": {
+      "highMemory": 90,
+      "channelErrors": 10
+    }
+  }
+}

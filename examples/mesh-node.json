@@ -1,0 +1,64 @@
+{
+  "uiPassword": "changeme",
+  "callsign": "N0CALL-1",
+  "passcode": "12345",
+  "channels": [
+    {
+      "id": "radio1",
+      "type": "serial",
+      "enabled": true,
+      "port": "/dev/ttyUSB0",
+      "baudRate": 9600,
+      "digipeater": {
+        "enabled": true,
+        "mode": "widen-n",
+        "maxHops": 3,
+        "rateLimit": 30
+      }
+    }
+  ],
+  "igate": {
+    "enabled": false
+  },
+  "bbs": {
+    "enabled": true,
+    "maxMessagesPerUser": 50,
+    "retentionDays": 90
+  },
+  "nexnet": {
+    "enabled": true,
+    "callsign": "N0CALL-1",
+    "mode": "mesh",
+    "keyFile": "nexnet_key.pem",
+    "peers": [
+      {
+        "callsign": "N1NODE-1",
+        "address": "192.168.1.100:4000",
+        "trusted": true
+      },
+      {
+        "callsign": "N2NODE-1",
+        "address": "192.168.1.101:4000",
+        "trusted": true
+      }
+    ],
+    "listenPort": 4000,
+    "routing": {
+      "algorithm": "dijkstra",
+      "lsaInterval": 300,
+      "qos": {
+        "enabled": true,
+        "levels": 4
+      }
+    },
+    "syncBBS": true,
+    "syncChat": true
+  },
+  "weatherAlerts": {
+    "enabled": true,
+    "sameCodes": ["026081", "026083"],
+    "checkInterval": 300,
+    "distributeViaAPRS": true,
+    "distributeViaNexNet": true
+  }
+}

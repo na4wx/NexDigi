@@ -16,6 +16,7 @@ const bbs = new BBS();
 const WinlinkManager = require('./lib/winlinkManager');
 const ChatManager = require('./lib/chatManager');
 const ChatHistoryManager = require('./lib/chatHistoryManager');
+const ChatSyncManager = require('./lib/ChatSyncManager');
 let aprsMessageHandler = null;
 let bbsSessionManager = null;
 let lookupHandler = null;
@@ -24,6 +25,7 @@ let messageAlertManager = null;
 let backboneManager = null;
 let chatManager = null;
 let chatHistoryManager = null;
+let chatSyncManager = null;
 
 const app = express();
 // Apply digipeater settings (routes + per-channel options) to runtime
@@ -427,6 +429,20 @@ try {
       backboneManager.on('neighbor-update', (callsign, info) => {
         console.log(`[Backbone] Neighbor update: ${callsign}, transports: ${info.transports.join(', ')}`);
       });
+      
+      // Initialize ChatSyncManager now that backbone is ready
+      if (chatManager) {
+        try {
+          chatSyncManager = new ChatSyncManager(chatManager, backboneManager, {
+            enabled: true,
+            syncInterval: 30000, // 30 seconds
+            maxMessagesPerSync: 100
+          });
+          console.log('ChatSyncManager initialized with NexNet backbone');
+        } catch (e) {
+          console.error('Failed to create ChatSyncManager:', e);
+        }
+      }
     } else {
       console.log('BackboneManager initialized but disabled in configuration');
     }
@@ -452,6 +468,9 @@ try {
 
   chatManager = new ChatManager(manager, { historyManager: chatHistoryManager });
   console.log('ChatManager created with history persistence');
+  
+  // Initialize ChatSyncManager after BackboneManager is ready
+  // This will be done after backbone initialization completes
 } catch (e) {
   console.error('Failed to create ChatManager:', e);
   chatManager = null;
@@ -657,6 +676,7 @@ dependencies.winlinkManager = winlinkManager;
 
 // expose chatManager
 dependencies.chatManager = chatManager;
+dependencies.chatSyncManager = () => chatSyncManager; // Function to get current sync manager
 
 // expose lastHeard via dependencies
 dependencies.lastHeard = lastHeard;
@@ -672,6 +692,9 @@ app.use((req, res, next) => {
   }
   next();
 });
+
+// Health check routes (NO authentication required - for monitoring/Docker)
+app.use('/api', require('./routes/health')(dependencies));
 
 // Auth routes MUST be mounted before authentication middleware
 app.use('/api/auth', require('./routes/auth'));
@@ -831,6 +854,12 @@ function shutdown(reason) {
       chatHistoryManager.shutdown();
     }
   } catch (e) { console.error('Chat history shutdown error:', e); }
+  try {
+    if (chatSyncManager) {
+      console.log('Shutting down chat sync manager...');
+      chatSyncManager.shutdown();
+    }
+  } catch (e) { console.error('Chat sync shutdown error:', e); }
 }
 
 process.on('SIGINT', () => shutdown('SIGINT'));

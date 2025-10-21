@@ -3,7 +3,7 @@
   "gatewayCallsign": "NA4WX",
   "host": "webmail.winlink.org",
   "port": 8772,
-  "password": "Walker08@",
+  "password": "winlinkpass",
   "autoConnect": true,
   "channels": {
     "radio1": {

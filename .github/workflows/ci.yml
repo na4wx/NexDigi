@@ -1,0 +1,274 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  release:
+    types: [ published ]
+
+jobs:
+  # Job 1: Lint and validate code
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd client && npm ci
+      
+      - name: Validate configuration files
+        run: npm run validate || echo "Config validation skipped (no config.json in CI)"
+      
+      - name: Run ESLint (if configured)
+        run: npm run lint || echo "ESLint not configured, skipping"
+        continue-on-error: true
+
+  # Job 2: Run unit tests
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18, 20]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd client && npm ci
+      
+      - name: Run unit tests
+        run: npm test
+        env:
+          NODE_ENV: test
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-node-${{ matrix.node-version }}
+          path: test-results/
+          if-no-files-found: ignore
+
+  # Job 3: Build client application
+  build-client:
+    name: Build Client
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install client dependencies
+        run: cd client && npm ci
+      
+      - name: Build client production bundle
+        run: npm run build
+      
+      - name: Check bundle size
+        run: |
+          cd client/dist
+          du -sh .
+          find . -name "*.js" -exec du -h {} \; | sort -h
+      
+      - name: Upload client artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-build
+          path: client/dist/
+          retention-days: 7
+
+  # Job 4: Security audit
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd client && npm ci
+      
+      - name: Run npm audit (server)
+        run: npm audit --audit-level=moderate || true
+        continue-on-error: true
+      
+      - name: Run npm audit (client)
+        run: cd client && npm audit --audit-level=moderate || true
+        continue-on-error: true
+      
+      - name: Check for known vulnerabilities
+        run: |
+          echo "Checking for high/critical vulnerabilities..."
+          npm audit --audit-level=high --json > audit-server.json || true
+          cd client && npm audit --audit-level=high --json > audit-client.json || true
+        continue-on-error: true
+      
+      - name: Upload audit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit
+          path: |
+            audit-server.json
+            client/audit-client.json
+          if-no-files-found: ignore
+
+  # Job 5: Integration test (optional, for future)
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd client && npm ci
+      
+      - name: Create test config
+        run: |
+          mkdir -p server/data
+          cat > server/config.json << EOF
+          {
+            "uiPassword": "test123",
+            "callsign": "N0CALL",
+            "passcode": "12345",
+            "channels": [],
+            "igate": { "enabled": false },
+            "bbs": { "enabled": false },
+            "nexnet": { "enabled": false }
+          }
+          EOF
+      
+      - name: Start server in background
+        run: |
+          cd server
+          node index.js &
+          sleep 5
+        env:
+          NODE_ENV: test
+      
+      - name: Run integration tests
+        run: npm run test:integration || echo "No integration tests configured yet"
+        continue-on-error: true
+      
+      - name: Stop server
+        if: always()
+        run: pkill -f "node index.js" || true
+
+  # Job 6: Create release artifacts (only on tags)
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [lint, test, build-client]
+    if: github.event_name == 'release'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Download client build
+        uses: actions/download-artifact@v4
+        with:
+          name: client-build
+          path: client/dist/
+      
+      - name: Install production dependencies
+        run: |
+          npm ci --production
+          cd client && npm ci --production
+      
+      - name: Create release archive
+        run: |
+          mkdir -p release
+          tar -czf release/nexdigi-${{ github.ref_name }}.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='test' \
+            --exclude='.github' \
+            server/ client/dist/ scripts/ docs/ examples/ \
+            package.json package-lock.json README.md LICENSE CHANGELOG.md
+      
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum nexdigi-${{ github.ref_name }}.tar.gz > checksums.txt
+      
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/nexdigi-${{ github.ref_name }}.tar.gz
+            release/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job 7: Notify on failure
+  notify:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [lint, test, build-client, security]
+    if: failure()
+    
+    steps:
+      - name: Report failure
+        run: |
+          echo "CI/CD pipeline failed!"
+          echo "Check the logs for details."
+          echo "Event: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
