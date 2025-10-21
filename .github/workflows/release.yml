@@ -1,0 +1,163 @@
+name: Release Automation
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      
+      - name: Install dependencies
+        run: |
+          npm ci
+          cd client && npm ci
+      
+      - name: Run tests
+        run: npm test
+      
+      - name: Build client
+        run: npm run build
+      
+      - name: Update version in package.json
+        run: |
+          npm version ${{ steps.get_version.outputs.VERSION }} --no-git-tag-version
+          cd client && npm version ${{ steps.get_version.outputs.VERSION }} --no-git-tag-version
+      
+      - name: Create release package
+        run: |
+          mkdir -p release/nexdigi-${{ steps.get_version.outputs.VERSION }}
+          
+          # Copy server files
+          cp -r server release/nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          
+          # Copy built client
+          mkdir -p release/nexdigi-${{ steps.get_version.outputs.VERSION }}/client
+          cp -r client/dist release/nexdigi-${{ steps.get_version.outputs.VERSION }}/client/
+          
+          # Copy scripts
+          cp -r scripts release/nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          
+          # Copy documentation
+          cp -r docs release/nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          
+          # Copy examples
+          cp -r examples release/nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          
+          # Copy root files
+          cp package.json package-lock.json README.md LICENSE CHANGELOG.md \
+             release/nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          
+          # Install production dependencies
+          cd release/nexdigi-${{ steps.get_version.outputs.VERSION }}
+          npm ci --production --ignore-scripts
+          cd client && npm ci --production --ignore-scripts
+      
+      - name: Create archives
+        run: |
+          cd release
+          
+          # Full package
+          tar -czf nexdigi-${{ steps.get_version.outputs.VERSION }}.tar.gz nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          zip -r nexdigi-${{ steps.get_version.outputs.VERSION }}.zip nexdigi-${{ steps.get_version.outputs.VERSION }}/
+          
+          # Server-only package
+          tar -czf nexdigi-server-${{ steps.get_version.outputs.VERSION }}.tar.gz \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/server \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/scripts \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/docs \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/examples \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/package.json \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/README.md \
+            nexdigi-${{ steps.get_version.outputs.VERSION }}/LICENSE
+      
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+      
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION=${{ steps.get_version.outputs.VERSION }}
+          CHANGELOG=$(awk "/## \[${VERSION}\]/,/## \[/" CHANGELOG.md | sed '1d;$d')
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: NexDigi v${{ steps.get_version.outputs.VERSION }}
+          body: |
+            # NexDigi v${{ steps.get_version.outputs.VERSION }}
+            
+            ## Downloads
+            
+            - **Full Package**: nexdigi-${{ steps.get_version.outputs.VERSION }}.tar.gz / .zip
+            - **Server Only**: nexdigi-server-${{ steps.get_version.outputs.VERSION }}.tar.gz
+            
+            ## Installation
+            
+            ```bash
+            # Extract the archive
+            tar -xzf nexdigi-${{ steps.get_version.outputs.VERSION }}.tar.gz
+            cd nexdigi-${{ steps.get_version.outputs.VERSION }}
+            
+            # Run setup wizard
+            npm run setup
+            
+            # Start the server
+            npm run dev
+            ```
+            
+            See [INSTALL.md](docs/INSTALL.md) for detailed installation instructions.
+            
+            ## Changes in This Release
+            
+            ${{ steps.changelog.outputs.CHANGELOG }}
+            
+            ## Verify Download
+            
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+            
+            ---
+            
+            **Full Changelog**: https://github.com/na4wx/NexDigi/blob/main/CHANGELOG.md
+            
+            **73 de NA4WX**
+          files: |
+            release/nexdigi-${{ steps.get_version.outputs.VERSION }}.tar.gz
+            release/nexdigi-${{ steps.get_version.outputs.VERSION }}.zip
+            release/nexdigi-server-${{ steps.get_version.outputs.VERSION }}.tar.gz
+            release/SHA256SUMS.txt
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Notify release created
+        run: |
+          echo "✅ Release v${{ steps.get_version.outputs.VERSION }} created successfully!"
+          echo "📦 Artifacts uploaded to GitHub Releases"
+          echo "🔗 https://github.com/na4wx/NexDigi/releases/tag/v${{ steps.get_version.outputs.VERSION }}"

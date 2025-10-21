@@ -1,0 +1,52 @@
+{
+  "uiPassword": "changeme",
+  "callsign": "N0CALL",
+  "passcode": "12345",
+  "channels": [
+    {
+      "id": "tnc1",
+      "type": "serial",
+      "enabled": true,
+      "port": "/dev/ttyUSB0",
+      "baudRate": 9600,
+      "digipeater": {
+        "enabled": true,
+        "mode": "widen-n",
+        "maxHops": 7,
+        "rateLimit": 30,
+        "beacon": {
+          "enabled": true,
+          "interval": 3600,
+          "message": "!3612.00N/08647.00W-NexDigi Headless Server",
+          "path": "WIDE1-1"
+        }
+      }
+    }
+  ],
+  "igate": {
+    "enabled": true,
+    "server": "rotate.aprs2.net",
+    "port": 14580,
+    "useTLS": true,
+    "filter": "r/36.1699/-86.7842/50",
+    "rateLimit": 10,
+    "bidirectional": true
+  },
+  "bbs": {
+    "enabled": true,
+    "maxMessagesPerUser": 50,
+    "retentionDays": 90
+  },
+  "nexnet": {
+    "enabled": false
+  },
+  "weatherAlerts": {
+    "enabled": false
+  },
+  "logging": {
+    "level": "info",
+    "file": "/var/log/nexdigi/server.log",
+    "maxSize": "10M",
+    "maxFiles": 5
+  }
+}

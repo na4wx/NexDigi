@@ -1,14 +1,23 @@
 {
   "name": "nexdigi",
-  "version": "0.8.100225",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "start": "node ./server/index.js",
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "nodemon --watch server --ignore server/data --ignore 'server/data/**' --ignore '**/*.json' --ext js --exec node server/index.js",
     "dev:client": "cd client && npm run dev",
+    "build": "npm run build:client",
     "build:client": "cd client && npm run build",
-    "test": "echo \"No tests yet\" && exit 0"
+    "install:all": "npm install && cd client && npm install && cd ..",
+    "setup": "node scripts/setup-wizard.js",
+    "reset": "node scripts/reset-database.js",
+    "backup": "node scripts/backup-data.js",
+    "logs": "tail -f server/logs/nexdigi.log 2>/dev/null || journalctl -u nexdigi -f",
+    "test": "node scripts/run-tests.js",
+    "test:watch": "nodemon --watch server --watch test --ext js --exec npm test",
+    "lint": "eslint server/**/*.js --fix",
+    "validate": "node scripts/validate-config.js"
   },
   "dependencies": {
     "axios": "^1.12.2",
@@ -24,5 +33,5 @@
   "keywords": [],
   "author": "",
   "license": "MIT",
-  "description": "NexDigi - modern APRS digipeater foundation (Node + React + MUI)"
+  "description": "NexDigi - modern AX.25 packet foundation (Node + React + MUI)"
 }

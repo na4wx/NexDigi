@@ -897,4 +897,114 @@ router.post('/settings', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/chat/sync/status
+ * Get chat synchronization status
+ */
+router.get('/sync/status', (req, res) => {
+  try {
+    const chatSyncManager = dependencies.chatSyncManager ? dependencies.chatSyncManager() : null;
+    
+    if (!chatSyncManager) {
+      return res.json({
+        success: true,
+        enabled: false,
+        message: 'Chat synchronization not initialized'
+      });
+    }
+    
+    const stats = chatSyncManager.getStats();
+    const config = chatSyncManager.config;
+    
+    res.json({
+      success: true,
+      enabled: config.enabled,
+      config: {
+        syncInterval: config.syncInterval,
+        maxMessagesPerSync: config.maxMessagesPerSync,
+        deduplicationTTL: config.deduplicationTTL
+      },
+      stats: {
+        messagesSent: stats.messagesSent,
+        messagesReceived: stats.messagesReceived,
+        messagesDeduplicated: stats.messagesDeduplicated,
+        syncAttempts: stats.syncAttempts,
+        syncFailures: stats.syncFailures,
+        conflictsResolved: stats.conflictsResolved,
+        seenMessagesCount: stats.seenMessagesCount,
+        pendingMessagesCount: stats.pendingMessagesCount,
+        vectorClocksCount: stats.vectorClocksCount,
+        roomsSyncing: stats.roomsSyncing
+      }
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/chat/sync/enable
+ * Enable or disable chat synchronization
+ */
+router.post('/sync/enable', (req, res) => {
+  try {
+    const { enabled } = req.body;
+    const chatSyncManager = dependencies.chatSyncManager ? dependencies.chatSyncManager() : null;
+    
+    if (!chatSyncManager) {
+      return res.status(404).json({
+        success: false,
+        error: 'Chat synchronization not initialized'
+      });
+    }
+    
+    chatSyncManager.setEnabled(enabled);
+    
+    res.json({
+      success: true,
+      enabled: chatSyncManager.config.enabled,
+      message: `Chat synchronization ${enabled ? 'enabled' : 'disabled'}`
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+/**
+ * POST /api/chat/sync/config
+ * Update chat synchronization configuration
+ */
+router.post('/sync/config', (req, res) => {
+  try {
+    const newConfig = req.body;
+    const chatSyncManager = dependencies.chatSyncManager ? dependencies.chatSyncManager() : null;
+    
+    if (!chatSyncManager) {
+      return res.status(404).json({
+        success: false,
+        error: 'Chat synchronization not initialized'
+      });
+    }
+    
+    chatSyncManager.updateConfig(newConfig);
+    
+    res.json({
+      success: true,
+      config: chatSyncManager.config,
+      message: 'Chat synchronization configuration updated'
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 module.exports = createChatRoutes;
