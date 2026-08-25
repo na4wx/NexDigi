@@ -19,13 +19,15 @@ const MessageQueue = require('./MessageQueue');
 const ReliabilityManager = require('./ReliabilityManager');
 const UserRegistry = require('./UserRegistry');
 const WinlinkForwarder = require('./WinlinkForwarder');
+const BBSSync = require('./BBSSync');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '../../data/backboneSettings.json');
 
 class BackboneManager extends EventEmitter {
-  constructor(channelManager, configPath = DEFAULT_CONFIG_PATH) {
+  constructor(channelManager, configPath = DEFAULT_CONFIG_PATH, bbs = null) {
     super();
     this.channelManager = channelManager;
+    this.bbs = bbs;
     this.configPath = configPath;
     this.config = null;
     this.transports = new Map(); // transportId -> Transport instance
@@ -43,6 +45,7 @@ class BackboneManager extends EventEmitter {
     this.reliabilityManager = null; // Will be initialized in initialize()
     this.userRegistry = null; // Will be initialized in initialize()
     this.winlinkForwarder = null; // Will be initialized in initialize()
+    this.bbsSync = null; // Will be initialized in initialize() if bbs was provided
 
     // Periodic maintenance
     this.maintenanceInterval = null;
@@ -232,6 +235,37 @@ class BackboneManager extends EventEmitter {
     this.winlinkForwarder.start();
 
     console.log('[BackboneManager] Winlink forwarder initialized');
+
+    // Initialize BBS sync (only if a BBS instance was provided and the
+    // 'bbs' service is offered/requested in config)
+    const bbsServiceEnabled = (this.config.services?.offer || []).includes('bbs') ||
+      (this.config.services?.request || []).includes('bbs');
+    if (this.bbs && bbsServiceEnabled) {
+      this.bbsSync = new BBSSync({
+        bbs: this.bbs,
+        backboneManager: this,
+        localCallsign: this.localCallsign,
+        syncInterval: this.config.bbsSync?.syncInterval,
+        incrementalThreshold: this.config.bbsSync?.incrementalThreshold,
+        conflictResolution: this.config.bbsSync?.conflictResolution
+      });
+      await this.bbsSync.start();
+
+      // Propagate local BBS writes into the sync layer so they get
+      // advertised to the mesh (Bloom filter / periodic sync).
+      this.bbs.on('message-added', (message) => {
+        this.bbsSync.notifyNewMessage(message).catch(err => {
+          console.error('[BackboneManager] Error notifying BBS sync of new message:', err.message);
+        });
+      });
+      this.bbs.on('message-deleted', (globalId) => {
+        this.bbsSync.notifyMessageDeleted(globalId).catch(err => {
+          console.error('[BackboneManager] Error notifying BBS sync of deleted message:', err.message);
+        });
+      });
+
+      console.log('[BackboneManager] BBS sync initialized');
+    }
 
     // Initialize transports
     await this._initializeTransports();
@@ -1368,6 +1402,11 @@ class BackboneManager extends EventEmitter {
       this.winlinkForwarder.stop();
     }
 
+    // Stop BBS sync
+    if (this.bbsSync) {
+      await this.bbsSync.stop();
+    }
+
     // Stop neighbor broadcasts if running
     const internet = this.transports.get('internet');
     if (internet) {
@@ -1480,6 +1519,11 @@ class BackboneManager extends EventEmitter {
     // Winlink forwarder status
     if (this.winlinkForwarder) {
       status.winlinkForwarder = this.winlinkForwarder.getStats();
+    }
+
+    // BBS sync status
+    if (this.bbsSync) {
+      status.bbsSync = this.bbsSync.getStats();
     }
 
     // Transport status

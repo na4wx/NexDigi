@@ -6,5 +6,6 @@
   "typingIndicators": true,
   "notificationSounds": true,
   "showJoinLeave": true,
-  "messageRetentionDays": 7
+  "messageRetentionDays": 7,
+  "adminCallsigns": []
 }

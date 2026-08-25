@@ -269,8 +269,8 @@ class APRSDistributor extends EventEmitter {
   async floodPacket(packet, sourceNode) {
     if (!this.backboneManager) return;
     
-    const neighbors = this.backboneManager.neighborTable.getAll();
-    
+    const neighbors = Array.from(this.backboneManager.neighborTable.getAll().values());
+
     for (const neighbor of neighbors) {
       // Skip source node
       if (neighbor.callsign === sourceNode) {

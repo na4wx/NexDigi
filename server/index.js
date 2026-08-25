@@ -325,6 +325,24 @@ function saveConfig(cfg) {
   writeJsonAtomicSync(CONFIG_PATH, cfg);
 }
 
+// Change the UI password: verifies currentPassword, persists newPassword to
+// config.json, and reloads it into the auth middleware's in-memory copy.
+function updateUiPassword(currentPassword, newPassword) {
+  const { verifyWebSocketAuth, reloadPassword } = require('./middleware/auth');
+  if (!verifyWebSocketAuth(currentPassword)) {
+    return { ok: false, status: 401, error: 'Current password is incorrect' };
+  }
+  if (!newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+    return { ok: false, status: 400, error: 'New password must be at least 8 characters' };
+  }
+  const onDisk = loadConfig();
+  onDisk.uiPassword = newPassword;
+  saveConfig(onDisk);
+  cfg.uiPassword = newPassword;
+  reloadPassword();
+  return { ok: true };
+}
+
 function loadBBSSettings() {
   try {
     const raw = fs.readFileSync(BBS_SETTINGS_PATH, 'utf8');
@@ -412,7 +430,7 @@ try {
 
 // Initialize BackboneManager (mesh networking)
 try {
-  backboneManager = new BackboneManager(manager);
+  backboneManager = new BackboneManager(manager, undefined, bbs);
   console.log('BackboneManager created');
   
   // Initialize backbone asynchronously (non-blocking)
@@ -655,6 +673,7 @@ const dependencies = {
   manager,
   cfg,
   saveConfig,
+  updateUiPassword,
   createAdapterForChannel,
   bbs,
   bbsSettings,
@@ -709,6 +728,19 @@ app.use('/api/bbs', bbsRoutes(dependencies));
 app.use('/api', hardwareRoutes(dependencies));
 app.use('/api/igate', igateRoutes({...dependencies, igate}));
 app.use('/api', systemRoutes(dependencies));
+
+// POST /api/system/password - change the UI password
+app.post('/api/system/password', (req, res) => {
+  const { currentPassword, newPassword } = req.body || {};
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ success: false, error: 'currentPassword and newPassword are required' });
+  }
+  const result = updateUiPassword(currentPassword, newPassword);
+  if (!result.ok) {
+    return res.status(result.status).json({ success: false, error: result.error });
+  }
+  res.json({ success: true, message: 'Password updated' });
+});
 app.use('/api/digipeater', digipeaterRoutes(dependencies));
 // Winlink routes
 try { app.use('/api', require('./routes/winlink')(dependencies)); } catch (e) { console.error('Failed to mount winlink routes', e); }
@@ -750,11 +782,7 @@ wss.on('connection', (ws, req) => {
   const password = url.searchParams.get('password') || req.headers['x-ui-password'];
   
   // Verify authentication for UI WebSocket connections
-  // Skip for backbone/node connections
-  const userAgent = req.headers['user-agent'] || '';
-  const isNodeConnection = userAgent.includes('NexDigi-Node') || req.headers['x-nexdigi-node'];
-  
-  if (!isNodeConnection && !verifyWebSocketAuth(password)) {
+  if (!verifyWebSocketAuth(password)) {
     ws.close(1008, 'Authentication required'); // Policy Violation
     console.warn('WebSocket connection rejected: Invalid or missing password');
     return;

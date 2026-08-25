@@ -18,38 +18,36 @@ try {
 }
 
 /**
- * Routes that don't require authentication (read-only or system)
+ * Routes that don't require authentication (read-only or system).
+ *
+ * NOTE: this middleware is mounted with `app.use('/api', authenticate)`, which
+ * strips the '/api' prefix from req.path before it reaches us — so these
+ * entries must NOT include the '/api' prefix, or they will never match.
+ * `methods: null` means all methods are public; otherwise only the listed
+ * HTTP methods are exempted (e.g. settings endpoints are GET-only public).
  */
 const publicRoutes = [
-  '/api/auth',             // Authentication endpoint itself
-  '/api/frames',           // Frame display (read-only)
-  '/api/channels',         // Channel list (read-only)
-  '/api/stats',            // Statistics (read-only)
-  '/api/lastheard',        // Last heard stations (read-only)
-  '/api/backbone',         // Backbone/mesh traffic (inter-node)
-  '/api/nexnet',           // NexNet mesh traffic (inter-node)
-  '/api/digipeater/metrics', // Digipeater metrics (read-only)
-  '/api/bbs/settings',     // BBS settings (read-only, GET only)
-  '/api/digipeater/settings' // Digipeater settings (read-only, GET only)
+  { path: '/frames', methods: null },              // Frame display (read-only)
+  { path: '/channels', methods: null },             // Channel list (read-only)
+  { path: '/stats', methods: null },                // Statistics (read-only)
+  { path: '/lastheard', methods: null },            // Last heard stations (read-only)
+  { path: '/backbone', methods: null },             // Backbone/mesh traffic (inter-node)
+  { path: '/nexnet', methods: null },               // NexNet mesh traffic (inter-node)
+  { path: '/digipeater/metrics', methods: null },   // Digipeater metrics (read-only)
+  { path: '/bbs/settings', methods: ['GET'] },      // BBS settings (read-only)
+  { path: '/digipeater/settings', methods: ['GET'] } // Digipeater settings (read-only)
 ];
 
 /**
- * Check if a route is public (no auth required)
+ * Check if a route is public (no auth required) for the given HTTP method.
  */
-function isPublicRoute(url) {
-  // Exact match or starts with public route
-  return publicRoutes.some(route => url === route || url.startsWith(route + '/'));
-}
-
-/**
- * Check if request is from a mesh/backbone node
- */
-function isNodeRequest(req) {
-  // Check for node-specific headers or user agents
-  const userAgent = req.get('User-Agent') || '';
-  const nodeHeader = req.get('X-NexDigi-Node');
-  
-  return userAgent.includes('NexDigi-Node') || !!nodeHeader;
+function isPublicRoute(url, method) {
+  return publicRoutes.some(route => {
+    const matchesPath = url === route.path || url.startsWith(route.path + '/');
+    if (!matchesPath) return false;
+    if (!route.methods) return true;
+    return route.methods.includes((method || 'GET').toUpperCase());
+  });
 }
 
 /**
@@ -80,16 +78,11 @@ function extractPassword(req) {
  * Authentication middleware
  */
 function authenticate(req, res, next) {
-  // Skip authentication for public routes
-  if (isPublicRoute(req.path)) {
+  // Skip authentication for public (read-only) routes
+  if (isPublicRoute(req.path, req.method)) {
     return next();
   }
-  
-  // Skip authentication for node-to-node traffic
-  if (isNodeRequest(req)) {
-    return next();
-  }
-  
+
   // Skip authentication for WebSocket upgrade requests (handled separately)
   if (req.headers.upgrade === 'websocket') {
     return next();
@@ -143,6 +136,5 @@ module.exports = {
   authenticate,
   verifyWebSocketAuth,
   reloadPassword,
-  isPublicRoute,
-  isNodeRequest
+  isPublicRoute
 };

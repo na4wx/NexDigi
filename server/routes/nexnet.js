@@ -228,14 +228,15 @@ router.post('/settings', async (req, res) => {
     // Save to file
     await saveSettings(mergedSettings);
 
-    // TODO: Apply settings to running BackboneManager instances
-    // This would require the BackboneManager to be accessible here
-    // For now, settings will be applied on next server restart
-
-    res.json({ 
-      success: true, 
-      message: 'Settings saved. Restart server to apply changes.',
-      settings: mergedSettings 
+    // NOTE: these settings (QoS, load balancing, etc.) are not currently
+    // consumed by BackboneManager or any running subsystem - QoSManager.js
+    // and LoadBalancer.js are never instantiated anywhere in the codebase.
+    // Restarting the server will NOT apply these values either; they are
+    // saved for a future integration but have no runtime effect yet.
+    res.json({
+      success: true,
+      message: 'Settings saved, but are not yet wired into the running backbone/QoS subsystem (no runtime effect).',
+      settings: mergedSettings
     });
   } catch (error) {
     console.error('Error saving NexNet settings:', error);

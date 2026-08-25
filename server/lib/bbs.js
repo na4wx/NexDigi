@@ -1,10 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const EventEmitter = require('events');
 const { writeJsonAtomicSync } = require('./fileHelpers');
 
 // Enhanced BBS system following amateur radio standards
-class BBS {
+class BBS extends EventEmitter {
   constructor(storagePath) {
+    super();
     this.storagePath = storagePath || path.join(__dirname, '../data/bbs.json');
     this.messages = [];
     this.messageCounter = 1;
@@ -20,6 +22,15 @@ class BBS {
       const data = JSON.parse(fs.readFileSync(this.storagePath, 'utf-8'));
       this.messages = data.messages || [];
       this.messageCounter = data.messageCounter || this.getNextMessageNumber();
+      // Backfill globalId for messages stored before it existed
+      let backfilled = false;
+      this.messages.forEach(msg => {
+        if (!msg.globalId) {
+          msg.globalId = `${String(msg.sender || 'UNKNOWN').toUpperCase()}:${Date.parse(msg.timestamp) || Date.now()}:${msg.messageNumber}`;
+          backfilled = true;
+        }
+      });
+      if (backfilled) this.saveMessages();
     }
 
     // Clean up expired messages on startup
@@ -60,11 +71,12 @@ class BBS {
   addMessage(sender, recipient, content, options = {}) {
     const {
       subject = '',
-      category = 'P', // P=Personal, B=Bulletin, T=Traffic, E=Emergency, A=Administrative  
+      category = 'P', // P=Personal, B=Bulletin, T=Traffic, E=Emergency, A=Administrative
       priority = 'N', // H=High, N=Normal, L=Low
       tags = [],
       replyTo = null,
-      expires = null
+      expires = null,
+      globalId = null // stable cross-node ID (backbone sync); auto-generated if omitted
     } = options;
 
     // Calculate expiration date based on message type
@@ -94,8 +106,10 @@ class BBS {
       expiresAt = now.toISOString();
     }
 
+    const messageNumber = this.messageCounter++;
     const message = {
-      messageNumber: this.messageCounter++,
+      messageNumber,
+      globalId: globalId || `${sender.toUpperCase()}:${Date.now()}:${messageNumber}`,
       sender: sender.toUpperCase(),
       recipient: recipient.toUpperCase(),
       subject,
@@ -113,7 +127,29 @@ class BBS {
 
     this.messages.push(message);
     this.saveMessages();
+    this.emit('message-added', message);
     return message;
+  }
+
+  /**
+   * Look up a message by its stable cross-node globalId (used for backbone sync).
+   */
+  getMessageByGlobalId(globalId) {
+    return this.messages.find(msg => msg.globalId === globalId) || null;
+  }
+
+  /**
+   * Delete a message by its stable cross-node globalId (used for backbone sync tombstones).
+   * @returns {boolean} true if a message was removed
+   */
+  deleteMessageByGlobalId(globalId) {
+    const initialLength = this.messages.length;
+    this.messages = this.messages.filter(msg => msg.globalId !== globalId);
+    if (this.messages.length !== initialLength) {
+      this.saveMessages();
+      return true;
+    }
+    return false;
   }
 
   getMessages(filter = {}) {
@@ -158,14 +194,12 @@ class BBS {
   }
 
   deleteMessage(messageNumber) {
-    const initialLength = this.messages.length;
+    const target = this.messages.find(msg => msg.messageNumber === parseInt(messageNumber));
+    if (!target) return false;
     this.messages = this.messages.filter(msg => msg.messageNumber !== parseInt(messageNumber));
-    
-    if (this.messages.length !== initialLength) {
-      this.saveMessages();
-      return true;
-    }
-    return false;
+    this.saveMessages();
+    this.emit('message-deleted', target.globalId);
+    return true;
   }
 
   getBulletins(category = 'B') {

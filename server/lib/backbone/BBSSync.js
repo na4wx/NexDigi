@@ -181,6 +181,28 @@ class BBSSync extends EventEmitter {
   }
   
   /**
+   * Convert a local BBS message object into the wire format sent to peers.
+   * @private
+   */
+  _toWireMessage(msg) {
+    return {
+      id: msg.globalId,
+      globalId: msg.globalId,
+      area: msg.category,
+      from: msg.sender,
+      to: msg.recipient,
+      subject: msg.subject,
+      content: msg.content,
+      category: msg.category,
+      priority: msg.priority,
+      tags: msg.tags,
+      replyTo: msg.replyTo,
+      expiresAt: msg.expiresAt,
+      timestamp: Date.parse(msg.timestamp)
+    };
+  }
+
+  /**
    * Check if message ID is known (for deduplication)
    * @param {String} messageId - Global message ID
    * @returns {Boolean} True if known
@@ -286,8 +308,8 @@ class BBSSync extends EventEmitter {
    * @param {Object} message - BBS message
    */
   async notifyNewMessage(message) {
-    // Increment local version vector for this area
-    const area = message.area || 'general';
+    // Increment local version vector for this area (BBS.js category code)
+    const area = message.category || message.area || 'P';
     const currentVersion = this.localVersionVector.get(area) || 0;
     this.localVersionVector.set(area, currentVersion + 1);
     
@@ -317,19 +339,29 @@ class BBSSync extends EventEmitter {
   async notifyMessageDeleted(messageId) {
     const timestamp = Date.now();
     this.tombstones.set(messageId, timestamp);
-    
+    this.knownMessageIds.delete(messageId);
+
     console.log(`[BBSSync] Message ${messageId} deleted, tombstone created`);
-    
-    // Broadcast tombstone to all nodes
+
+    // Broadcast tombstone to all known neighbors
     const tombstone = {
       type: SyncMessageType.TOMBSTONE,
       fromNode: this.localCallsign,
       messageId,
       deletedAt: timestamp
     };
-    
-    // TODO: Broadcast tombstone via backbone
-    
+
+    const neighborMap = this.backboneManager?.neighborTable?.getAll();
+    const neighbors = neighborMap ? Array.from(neighborMap.values()) : [];
+    const payload = Buffer.from(JSON.stringify(tombstone));
+    for (const neighbor of neighbors) {
+      try {
+        await this.backboneManager.sendData(neighbor.callsign, payload, { priority: 'normal' });
+      } catch (error) {
+        console.error(`[BBSSync] Error broadcasting tombstone to ${neighbor.callsign}:`, error.message);
+      }
+    }
+
     this.emit('tombstone-created', messageId);
   }
   
@@ -354,10 +386,14 @@ class BBSSync extends EventEmitter {
    * @private
    */
   async _loadKnownMessageIds() {
-    // TODO: Query BBS for all message IDs
-    // For now, start with empty set
     this.knownMessageIds.clear();
-    console.log('[BBSSync] Loaded known message IDs');
+    const messages = (this.bbs && typeof this.bbs.getMessages === 'function') ? this.bbs.getMessages({}) : [];
+    for (const msg of messages) {
+      if (!msg.globalId) continue;
+      this.knownMessageIds.add(msg.globalId);
+      this.addToBloomFilter(msg.globalId, msg.category);
+    }
+    console.log(`[BBSSync] Loaded ${this.knownMessageIds.size} known message IDs`);
   }
   
   /**
@@ -365,10 +401,16 @@ class BBSSync extends EventEmitter {
    * @private
    */
   async _initializeVersionVector() {
-    // TODO: Load version vector from BBS metadata
-    // For now, start at 0
+    // BBS.js does not persist a per-area version counter, so approximate it
+    // from the current message count per category (area). This is enough to
+    // let peers detect "nothing changed" vs "something changed" per area.
     this.localVersionVector.clear();
-    console.log('[BBSSync] Initialized version vector');
+    const messages = (this.bbs && typeof this.bbs.getMessages === 'function') ? this.bbs.getMessages({}) : [];
+    for (const msg of messages) {
+      const area = msg.category || 'P';
+      this.localVersionVector.set(area, (this.localVersionVector.get(area) || 0) + 1);
+    }
+    console.log('[BBSSync] Initialized version vector', Object.fromEntries(this.localVersionVector));
   }
   
   /**
@@ -376,13 +418,15 @@ class BBSSync extends EventEmitter {
    * @private
    */
   _initializeAreaSchedules() {
-    // Default area priorities and sync intervals
+    // Default area priorities and sync intervals.
+    // Area names match BBS.js message `category` codes (P/B/T/E/A) so sync
+    // requests can filter bbs.getMessages({ category: area }) directly.
     const defaultAreas = [
-      { name: 'general', priority: 1, interval: 1800000 },      // 30 min
-      { name: 'emergency', priority: 0, interval: 300000 },     // 5 min (highest priority)
-      { name: 'weather', priority: 2, interval: 900000 },       // 15 min
-      { name: 'announcements', priority: 3, interval: 3600000 }, // 60 min
-      { name: 'personal', priority: 4, interval: 7200000 }      // 120 min (lowest priority)
+      { name: 'E', priority: 0, interval: 300000 },    // Emergency - 5 min (highest priority)
+      { name: 'B', priority: 1, interval: 900000 },     // Bulletin - 15 min
+      { name: 'T', priority: 2, interval: 1800000 },    // Traffic - 30 min
+      { name: 'A', priority: 3, interval: 3600000 },    // Administrative - 60 min
+      { name: 'P', priority: 4, interval: 7200000 }     // Personal - 120 min (lowest priority)
     ];
     
     for (const area of defaultAreas) {
@@ -534,7 +578,7 @@ class BBSSync extends EventEmitter {
     // Listen for BBS sync messages on backbone
     this.backboneManager.on('data', (packet) => {
       try {
-        const data = packet.payload.toString('utf8');
+        const data = packet.data.toString('utf8');
         const message = JSON.parse(data);
         
         // Check if it's a BBS sync message
@@ -555,8 +599,9 @@ class BBSSync extends EventEmitter {
    */
   async _performPeriodicSync() {
     // Get all backbone neighbors
-    const neighbors = this.backboneManager.neighborTable?.getAll() || [];
-    
+    const neighborMap = this.backboneManager.neighborTable?.getAll();
+    const neighbors = neighborMap ? Array.from(neighborMap.values()) : [];
+
     if (neighbors.length === 0) {
       console.log('[BBSSync] No neighbors, skipping sync');
       return;
@@ -633,13 +678,24 @@ class BBSSync extends EventEmitter {
    */
   async _handleSyncRequest(message, fromNode) {
     console.log(`[BBSSync] Handling sync request from ${fromNode}`);
-    
-    // TODO: Query BBS for messages matching criteria
-    // - sinceTimestamp (if provided)
-    // - areas (if specified)
-    
-    const messageList = []; // Array of { id, area, subject, from, timestamp, ... }
-    
+
+    const { sinceTimestamp, areas } = message;
+    const allMessages = (this.bbs && typeof this.bbs.getMessages === 'function') ? this.bbs.getMessages({}) : [];
+
+    const messageList = allMessages
+      .filter(msg => {
+        if (Array.isArray(areas) && areas.length > 0 && !areas.includes(msg.category)) return false;
+        if (sinceTimestamp && Date.parse(msg.timestamp) <= sinceTimestamp) return false;
+        return true;
+      })
+      .map(msg => ({
+        id: msg.globalId,
+        area: msg.category,
+        subject: msg.subject,
+        from: msg.sender,
+        timestamp: Date.parse(msg.timestamp)
+      }));
+
     const response = {
       type: SyncMessageType.SYNC_RESPONSE,
       fromNode: this.localCallsign,
@@ -702,15 +758,15 @@ class BBSSync extends EventEmitter {
    */
   async _handleMessageFetch(message, fromNode) {
     console.log(`[BBSSync] Fetching ${message.messageIds.length} messages for ${fromNode}`);
-    
-    // TODO: Get full message content from BBS
-    const messages = []; // Array of full message objects
-    
+
+    const messages = [];
     for (const messageId of message.messageIds) {
-      // TODO: bbs.getMessage(messageId)
-      // messages.push(fullMessage);
+      const full = (this.bbs && typeof this.bbs.getMessageByGlobalId === 'function')
+        ? this.bbs.getMessageByGlobalId(messageId)
+        : null;
+      if (full) messages.push(this._toWireMessage(full));
     }
-    
+
     const response = {
       type: SyncMessageType.MESSAGE_DATA,
       fromNode: this.localCallsign,
@@ -733,90 +789,78 @@ class BBSSync extends EventEmitter {
    */
   async _handleMessageData(message, fromNode) {
     console.log(`[BBSSync] Received ${message.messages.length} messages from ${fromNode}`);
-    
+
     for (const msg of message.messages) {
+      const globalId = msg.globalId || msg.id;
+      if (!globalId || !msg.content) {
+        // Bloom-filter reconciliation can send bare {id} stubs with no content;
+        // nothing to store until the full message is fetched separately.
+        continue;
+      }
+
       // Check for duplicates
-      if (this.isKnownMessage(msg.globalId || msg.id)) {
+      if (this.isKnownMessage(globalId)) {
         this.stats.duplicatesSkipped++;
         continue;
       }
-      
-      // Check if we already have this message
-      const existingMessage = this.bbs.getMessage ? this.bbs.getMessage(msg.id) : null;
-      
+
+      const remoteTimestamp = typeof msg.timestamp === 'number' ? msg.timestamp : Date.parse(msg.timestamp);
+      const existingMessage = this.bbs.getMessageByGlobalId ? this.bbs.getMessageByGlobalId(globalId) : null;
+
+      const addOptions = (m) => ({
+        subject: m.subject || '',
+        category: m.category || 'P',
+        priority: m.priority || 'N',
+        tags: m.tags || [],
+        replyTo: m.replyTo || null,
+        expires: m.expiresAt || null,
+        globalId
+      });
+
       if (existingMessage) {
-        // Check for conflicts
-        const conflict = this._detectConflict(existingMessage, null, msg);
-        
+        const existingTimestamp = Date.parse(existingMessage.timestamp);
+        const conflict = this._detectConflict(existingMessage, null, { ...msg, timestamp: remoteTimestamp });
+
         if (conflict) {
-          console.log(`[BBSSync] Conflict detected for message ${msg.id}`);
+          console.log(`[BBSSync] Conflict detected for message ${globalId}`);
           const resolved = this._resolveConflict(existingMessage, msg, conflict);
-          
-          // Update with resolved version
-          if (this.bbs.addMessage) {
-            this.bbs.addMessage(
-              String(resolved.from || resolved.sender || 'UNKNOWN'),
-              String(resolved.to || resolved.recipient || 'ALL'),
-              String(resolved.content || ''),
-              {
-                subject: resolved.subject || '',
-                category: resolved.category || 'P',
-                priority: resolved.priority || 'N',
-                tags: resolved.tags || [],
-                replyTo: resolved.replyTo || null,
-                expires: resolved.expiresAt || null
-              }
-            );
-          }
-        } else {
-          // No conflict, just update if remote is newer
-          if (msg.timestamp > existingMessage.timestamp) {
-            if (this.bbs.addMessage) {
-              this.bbs.addMessage(
-                String(msg.from || msg.sender || 'UNKNOWN'),
-                String(msg.to || msg.recipient || 'ALL'),
-                String(msg.content || ''),
-                {
-                  subject: msg.subject || '',
-                  category: msg.category || 'P',
-                  priority: msg.priority || 'N',
-                  tags: msg.tags || [],
-                  replyTo: msg.replyTo || null,
-                  expires: msg.expiresAt || null
-                }
-              );
-            }
-          }
-        }
-      } else {
-        // New message, add it
-        if (this.bbs.addMessage) {
-          // BBS.addMessage expects (sender, recipient, content, options)
+          if (this.bbs.deleteMessageByGlobalId) this.bbs.deleteMessageByGlobalId(globalId);
+          this.bbs.addMessage(
+            String(resolved.from || resolved.sender || 'UNKNOWN'),
+            String(resolved.to || resolved.recipient || 'ALL'),
+            String(resolved.content || resolved.body || ''),
+            addOptions(resolved)
+          );
+        } else if (remoteTimestamp > existingTimestamp) {
+          // No conflict, remote is newer - replace local copy
+          if (this.bbs.deleteMessageByGlobalId) this.bbs.deleteMessageByGlobalId(globalId);
           this.bbs.addMessage(
             String(msg.from || msg.sender || 'UNKNOWN'),
             String(msg.to || msg.recipient || 'ALL'),
             String(msg.content || ''),
-            {
-              subject: msg.subject || '',
-              category: msg.category || 'P',
-              priority: msg.priority || 'N',
-              tags: msg.tags || [],
-              replyTo: msg.replyTo || null,
-              expires: msg.expiresAt || null
-            }
+            addOptions(msg)
           );
         }
+      } else {
+        // New message, add it under its originating globalId
+        this.bbs.addMessage(
+          String(msg.from || msg.sender || 'UNKNOWN'),
+          String(msg.to || msg.recipient || 'ALL'),
+          String(msg.content || ''),
+          addOptions(msg)
+        );
       }
-      
+
       // Mark as known
-      this.markMessageKnown(msg.globalId || msg.id);
+      this.markMessageKnown(globalId);
+      this.addToBloomFilter(globalId, msg.category || msg.area);
       this.stats.messagesReceived++;
       this.stats.messagesSynced++;
     }
-    
+
     this.syncStatus.set(fromNode, SyncStatus.COMPLETE);
     this.lastSyncTime.set(fromNode, Date.now());
-    
+
     this.emit('messages-received', fromNode, message.messages.length);
   }
   
@@ -836,13 +880,16 @@ class BBSSync extends EventEmitter {
    */
   async _handleTombstone(message, fromNode) {
     console.log(`[BBSSync] Received tombstone for ${message.messageId} from ${fromNode}`);
-    
+
     // Record tombstone
     this.tombstones.set(message.messageId, message.deletedAt);
-    
+
     // Delete from BBS if present
-    // TODO: await this.bbs.deleteMessage(message.messageId);
-    
+    if (this.bbs && typeof this.bbs.deleteMessageByGlobalId === 'function') {
+      this.bbs.deleteMessageByGlobalId(message.messageId);
+    }
+    this.knownMessageIds.delete(message.messageId);
+
     this.stats.tombstonesProcessed++;
     this.emit('tombstone-received', message.messageId, fromNode);
   }
@@ -865,18 +912,19 @@ class BBSSync extends EventEmitter {
       return;
     }
     
-    // Find messages we have that remote doesn't
+    // Find messages we have (in this area) that remote doesn't
     const messagesToSend = [];
-    
-    // TODO: Query BBS for all messages in this area
-    // For now, check known messages
-    for (const messageId of this.knownMessageIds) {
+    const areaMessages = (this.bbs && typeof this.bbs.getMessages === 'function')
+      ? this.bbs.getMessages({ category: message.area })
+      : [];
+
+    for (const msg of areaMessages) {
+      if (!msg.globalId || !this.knownMessageIds.has(msg.globalId)) continue;
       // Check if remote likely has this message
-      if (!remoteFilter.has(messageId)) {
-        // Remote probably doesn't have it
-        // TODO: Get full message from BBS
-        messagesToSend.push({ id: messageId });
-        
+      if (!remoteFilter.has(msg.globalId)) {
+        // Remote probably doesn't have it - send the full message, not just the id
+        messagesToSend.push(this._toWireMessage(msg));
+
         if (messagesToSend.length >= this.maxSyncBatchSize) {
           break; // Respect batch size limit
         }

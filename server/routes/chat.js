@@ -10,6 +10,25 @@ const ChatManager = require('../lib/chatManager');
 const ChatSession = require('../lib/chatSession');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
+
+const CHAT_SETTINGS_PATH = path.join(__dirname, '..', 'data', 'chatSettings.json');
+
+/**
+ * Check whether a callsign is configured as a chat admin/moderator
+ * (server/data/chatSettings.json -> adminCallsigns: ["CALL", ...]).
+ * Base callsign is compared case-insensitively, ignoring any -SSID suffix.
+ */
+function isChatAdmin(callsign) {
+  try {
+    const settings = JSON.parse(fsSync.readFileSync(CHAT_SETTINGS_PATH, 'utf8'));
+    const admins = Array.isArray(settings.adminCallsigns) ? settings.adminCallsigns : [];
+    const base = String(callsign || '').toUpperCase().split('-')[0];
+    return admins.map(c => String(c).toUpperCase().split('-')[0]).includes(base);
+  } catch (err) {
+    return false;
+  }
+}
 
 // Chat manager instance (will be injected)
 let chatManager = null;
@@ -787,8 +806,14 @@ router.delete('/history/:room', (req, res) => {
       });
     }
     
-    // TODO: Check if callsign is moderator/admin
-    
+    if (!isChatAdmin(callsign)) {
+      return res.status(403).json({
+        success: false,
+        error: 'Forbidden',
+        message: `${callsign} is not a configured chat admin (see adminCallsigns in server/data/chatSettings.json)`
+      });
+    }
+
     chatManager.historyManager.clearRoom(roomName);
     
     res.json({

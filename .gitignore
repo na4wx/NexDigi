@@ -8,4 +8,13 @@ build/
 /.idea/
 *ANALYSIS*.md
 *PROGRESS*.md
-*test_*
+# Ad hoc scratch scripts (server/test_*.js), NOT the test/ suite below -
+# a bare `*test_*` here would also match test/test_*_unit.js and silently
+# keep the real test suite out of git (which is what happened previously).
+/server/test_*
+
+# Local runtime configuration & credentials — copy the .example files instead.
+# These hold real UI/APRS-IS/Winlink credentials once configured and must
+# never be committed. See docs/CONTRIBUTING.md / docs/INSTALL.md.
+/server/config.json
+/server/data/winlinkSettings.json

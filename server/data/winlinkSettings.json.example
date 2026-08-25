@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "gatewayCallsign": "N0CALL",
+  "host": "webmail.winlink.org",
+  "port": 8772,
+  "password": "changeme",
+  "autoConnect": false,
+  "channels": {
+    "radio1": {
+      "enabled": false,
+      "callsign": "N0CALL-10",
+      "mode": "RMS"
+    }
+  },
+  "sessionTimeoutSec": 300
+}

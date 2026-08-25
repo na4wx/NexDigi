@@ -1,0 +1,22 @@
+{
+  "uiPassword": "changeme",
+  "channels": [
+    {
+      "id": "radio1",
+      "name": "radio1",
+      "type": "mock",
+      "enabled": true,
+      "options": {
+        "callsign": "N0CALL-1"
+      }
+    }
+  ],
+  "igate": {
+    "enabled": false,
+    "host": "noam.aprs2.net",
+    "port": 14580,
+    "call": "N0CALL",
+    "pass": "-1",
+    "channels": []
+  }
+}
