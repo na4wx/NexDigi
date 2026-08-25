@@ -309,17 +309,21 @@ class ChannelManager extends EventEmitter {
         const endFend = ch._rxBuffer.indexOf(0xC0, startFend + 1);
         if (endFend === -1) break; // No complete frame yet
         
-        // Extract frame data (skip FEND bytes)
-        const frameData = ch._rxBuffer.slice(startFend + 1, endFend);
-        if (frameData.length > 0) {
-          try {
-            // Parse KISS frame - remove command byte if present  
-            let ax25Data = frameData;
-            if (ax25Data[0] <= 0x1F) ax25Data = ax25Data.slice(1); // Remove KISS command
+        // Extract and de-escape this frame via the shared KISS helper
+        // (FESC/TFEND/TFESC byte-stuffing must be reversed here - a raw
+        // slice between FEND bytes, as this used to do, silently left
+        // every escaped byte as two literal bytes instead of one,
+        // corrupting any payload containing a literal 0xC0 or 0xDB byte).
+        // Include both FEND delimiters so unescapeStream sees one
+        // complete FEND...FEND frame.
+        const rawFrame = ch._rxBuffer.slice(startFend, endFend + 1);
+        try {
+          const decoded = unescapeStream(rawFrame);
+          for (const ax25Data of decoded) {
             if (ax25Data.length > 0) frames.push(ax25Data);
-          } catch (e) {
-            // Skip invalid frames
           }
+        } catch (e) {
+          // Skip invalid frames
         }
         processed = endFend + 1;
       }
