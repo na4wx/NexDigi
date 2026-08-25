@@ -226,17 +226,33 @@ class RoutingEngine extends EventEmitter {
    */
   selectRoute(destination, options = {}) {
     const route = this.getRoute(destination);
-    
+
     if (!route) {
       return null;
     }
 
     // Apply policies based on message type
     const policy = this._getPolicy(options.messageType);
-    
-    // For now, return the calculated route
-    // TODO: Implement policy-based route selection in Phase 3.6
-    return route;
+
+    // Hop-count limit is a hard, safe constraint: a route that's too long
+    // for this message type (e.g. emergency traffic capped at a few hops)
+    // is rejected outright rather than delivered late/unreliably.
+    const maxHops = Number.isFinite(options.maxHops) ? options.maxHops : policy.maxHops;
+    if (Number.isFinite(maxHops) && route.hopCount > maxHops) {
+      return null;
+    }
+
+    // Transport preference is NOT enforced as a hard filter: the routing
+    // table only tracks a single best-cost route per destination (see
+    // calculateRoutes), so there's no alternate route to fall back to if
+    // the preference doesn't match - rejecting here would silently
+    // blackhole otherwise-deliverable messages. Surface it as metadata
+    // instead so callers can see when the preference wasn't honored.
+    const preferredTransport = options.preferredTransport ||
+      (policy.preferInternet === false ? 'rf' : (policy.preferInternet ? 'internet' : null));
+    const matchesPreference = !preferredTransport || route.transport === preferredTransport;
+
+    return { ...route, matchesPreference, preferredTransport: preferredTransport || null };
   }
 
   /**

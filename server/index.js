@@ -270,6 +270,17 @@ manager.on('frame', (event) => {
       }
     }
   } catch (e) { console.error('IGate forward error:', e); }
+  // Feed locally-heard APRS traffic into the mesh's APRS distributor (if
+  // backbone + aprs-is service are enabled) so it gets flooded to peers.
+  try {
+    if (backboneManager && backboneManager.aprsDistributor && parsed && Array.isArray(parsed.addresses) && parsed.addresses.length >= 2) {
+      const from = `${parsed.addresses[1].callsign}${typeof parsed.addresses[1].ssid === 'number' && parsed.addresses[1].ssid ? '-' + parsed.addresses[1].ssid : ''}`;
+      const to = parsed.addresses[0].callsign;
+      const content = parsed.payload ? parsed.payload.toString('utf8') : '';
+      backboneManager.aprsDistributor.distributePacket({ source: from, destination: to, content }, null)
+        .catch(err => console.error('[APRSDistributor] distributePacket error:', err.message));
+    }
+  } catch (e) { console.error('APRS distribution error:', e && e.message); }
 });
 manager.on('tx', (event) => {
   let parsed = null;
@@ -438,10 +449,16 @@ try {
     if (backboneManager.enabled) {
       console.log('BackboneManager initialized and running');
       
-      // Listen for incoming data from backbone
+      // Log incoming data from backbone that no subsystem recognized.
+      // BBSSync, APRSDistributor, and the ping/pong handler each register
+      // their own 'data' listener and self-filter by message type/shape;
+      // Winlink-shaped payloads are intercepted even earlier, inside
+      // BackboneManager._deliverData, before this event fires at all. This
+      // listener is just a visibility net for anything none of them claim.
       backboneManager.on('data', (packet) => {
-        console.log(`[Backbone] Data received from ${packet.source}:`, packet.data.length, 'bytes');
-        // TODO: Route data to appropriate handler (BBS, Winlink, etc.)
+        let type = null;
+        try { type = JSON.parse(packet.data.toString('utf8')).type; } catch (e) { /* not JSON */ }
+        console.log(`[Backbone] Data received from ${packet.source}: ${packet.data.length} bytes${type ? ` (type: ${type})` : ''}`);
       });
       
       backboneManager.on('neighbor-update', (callsign, info) => {

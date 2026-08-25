@@ -342,8 +342,8 @@ class APRSDistributor extends EventEmitter {
    * @private
    */
   async handleBackbonePacket(event) {
-    const { source, payload } = event;
-    
+    const { source, data: payload } = event;
+
     try {
       const data = JSON.parse(payload.toString());
       

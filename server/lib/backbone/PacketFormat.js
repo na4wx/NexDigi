@@ -386,6 +386,12 @@ class PacketFormat {
       source,
       destination,
       payload: data,
+      // Forward a caller-supplied messageId (must be a 32-char hex string
+      // or 16-byte Buffer) instead of always generating a fresh random one
+      // - callers like WinlinkForwarder track delivery by their own
+      // message ID and need it to be the actual wire ID for ACKs to
+      // correlate back to the right pending message.
+      messageId: options.messageId,
       priority: options.priority || Priority.NORMAL,
       flags: options.flags || PacketFlags.NONE,
       routingInfo: options.routingInfo || {},

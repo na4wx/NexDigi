@@ -8,6 +8,7 @@
 const EventEmitter = require('events');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
 const RFTransport = require('./RFTransport');
 const InternetTransport = require('./InternetTransport');
 const { PacketFormat, PacketType, PacketFlags, Priority } = require('./PacketFormat');
@@ -19,7 +20,14 @@ const MessageQueue = require('./MessageQueue');
 const ReliabilityManager = require('./ReliabilityManager');
 const UserRegistry = require('./UserRegistry');
 const WinlinkForwarder = require('./WinlinkForwarder');
+const MessageStore = require('./MessageStore');
 const BBSSync = require('./BBSSync');
+const MonitoringManager = require('./MonitoringManager');
+const APRSStationTracker = require('./APRSStationTracker');
+const WeatherParser = require('./WeatherParser');
+const APRSDistributor = require('./APRSDistributor');
+const LoadBalancer = require('./LoadBalancer');
+const FragmentationManager = require('./FragmentationManager');
 
 const DEFAULT_CONFIG_PATH = path.join(__dirname, '../../data/backboneSettings.json');
 
@@ -200,10 +208,18 @@ class BackboneManager extends EventEmitter {
 
     console.log('[BackboneManager] User registry initialized');
 
+    // Outbound Winlink message persistence (survives server restarts)
+    this.messageStore = new MessageStore({
+      dataDir: path.join(path.dirname(this.configPath), 'message-store'),
+      maxAge: this.config.winlink?.messageStoreMaxAge || 604800000, // 7 days
+      maxMessagesPerUser: this.config.winlink?.messageStoreMaxPerUser || 100
+    });
+
     // Initialize Winlink forwarder
     this.winlinkForwarder = new WinlinkForwarder({
       backboneManager: this,
       userRegistry: this.userRegistry,
+      messageStore: this.messageStore,
       localCallsign: this.localCallsign,
       cmsGateway: this.config.winlink?.cmsGateway || false,
       messageTimeout: this.config.winlink?.messageTimeout || 3600000,
@@ -235,7 +251,7 @@ class BackboneManager extends EventEmitter {
       this.emit('winlink-for-cms', messageId, message);
     });
 
-    this.winlinkForwarder.start();
+    await this.winlinkForwarder.start();
 
     console.log('[BackboneManager] Winlink forwarder initialized');
 
@@ -268,6 +284,77 @@ class BackboneManager extends EventEmitter {
       });
 
       console.log('[BackboneManager] BBS sync initialized');
+    }
+
+    // Monitoring: passive metrics/health tracking (packet counts, latency,
+    // node health, alerts). Purely observational - never affects routing
+    // or delivery, safe to always enable when the backbone is up.
+    this.monitoringManager = new MonitoringManager({
+      localCallsign: this.localCallsign,
+      backboneManager: this
+    });
+
+    // Respond to pings so measureLatency() (used by MonitoringManager)
+    // actually gets replies, and feed replies back into it.
+    this.on('data', (packet) => {
+      let msg;
+      try { msg = JSON.parse(packet.data.toString('utf8')); } catch (e) { return; }
+      if (!msg || typeof msg !== 'object') return;
+
+      if (msg.type === 'ping') {
+        this.sendData(packet.source, { type: 'pong', pingId: msg.pingId, timestamp: msg.timestamp }, { priority: Priority.HIGH })
+          .catch(err => console.warn('[BackboneManager] Failed to send pong:', err.message));
+      } else if (msg.type === 'pong') {
+        this.monitoringManager.handlePingResponse(msg.pingId, packet.source);
+      }
+    });
+
+    console.log('[BackboneManager] Monitoring manager initialized');
+
+    // Load balancing between multiple viable transports to the SAME
+    // neighbor (e.g. a node reachable via both RF and Internet). Does not
+    // (and cannot, given a single-best-path routing table - see
+    // RoutingEngine.calculateRoutes) choose between multi-hop route
+    // alternatives; see _selectTransport for where this is actually used.
+    this.loadBalancer = new LoadBalancer({
+      localCallsign: this.localCallsign,
+      algorithm: this.config.loadBalancing?.algorithm || 'weighted',
+      failureThreshold: this.config.loadBalancing?.failureThreshold || 3
+    });
+
+    // Fragmentation for large payloads over constrained links (RF in
+    // particular). See sendData/_handleFragment for where this is used.
+    this.fragmentationManager = new FragmentationManager({
+      mtu: this.config.fragmentation?.mtu || 200,
+      reassemblyTimeout: this.config.fragmentation?.reassemblyTimeout || 30000
+    });
+    this.fragmentationManager.start();
+
+    // APRS distribution across the mesh (only when explicitly offered as a
+    // service, same gating convention as 'bbs' above)
+    const aprsServiceEnabled = (this.config.services?.offer || []).includes('aprs-is') ||
+      (this.config.services?.request || []).includes('aprs-is');
+    if (aprsServiceEnabled) {
+      this.aprsStationTracker = new APRSStationTracker({
+        localCallsign: this.localCallsign
+        // Intentionally no bbsSync here: position beacons are frequent and
+        // don't belong in the BBS message store, unlike weather bulletins.
+      });
+
+      this.weatherParser = new WeatherParser({
+        localCallsign: this.localCallsign,
+        bbsSync: this.bbsSync, // severe weather bulletins are worth relaying as BBS bulletins
+        bbs: this.bbs
+      });
+
+      this.aprsDistributor = new APRSDistributor({
+        backboneManager: this,
+        stationTracker: this.aprsStationTracker,
+        weatherParser: this.weatherParser,
+        localCallsign: this.localCallsign
+      });
+
+      console.log('[BackboneManager] APRS distribution initialized');
     }
 
     // Initialize transports
@@ -476,9 +563,16 @@ class BackboneManager extends EventEmitter {
         break;
       
       case PacketType.DATA:
-        this._handleData(packet, transportId);
+        // A fragment is a DATA packet with the FRAGMENTED flag set (there
+        // is no separate PacketType for it - PacketFlags.FRAGMENTED is
+        // what marks it).
+        if (packet.flags & PacketFlags.FRAGMENTED) {
+          this._handleFragmented(packet, transportId);
+        } else {
+          this._handleData(packet, transportId);
+        }
         break;
-      
+
       case PacketType.ACK:
         this._handleAck(packet, transportId);
         break;
@@ -631,63 +725,124 @@ class BackboneManager extends EventEmitter {
     // Is this for us?
     if (destination === this.localCallsign || destination === 'CQ') {
       console.log(`[BackboneManager] Received data from ${source}, ${payload.length} bytes`);
-      
-      // Check if this is a Winlink message
-      try {
-        // Try to parse as JSON to detect Winlink encapsulation
-        const possibleWinlink = JSON.parse(payload.toString('utf8'));
-        
-        if (possibleWinlink.from && possibleWinlink.to && possibleWinlink.type && possibleWinlink.data) {
-          // This looks like a Winlink message
-          console.log(`[BackboneManager] Detected Winlink message: ${possibleWinlink.from} → ${possibleWinlink.to}`);
-          
-          if (this.winlinkForwarder) {
-            this.winlinkForwarder.receiveMessage(messageId, payload);
-          }
-          
-          // Send ACK
-          if (destination !== 'CQ') {
-            this._sendAck(source, messageId);
-          }
-          
-          // Mark as delivered
-          const cached = this.messageCache.get(messageId);
-          if (cached) {
-            cached.delivered = true;
-          }
-          
-          return;
-        }
-      } catch (e) {
-        // Not JSON or not Winlink format, treat as regular data
-      }
-      
-      // Regular data packet
-      this.emit('data', {
-        source,
-        destination,
-        data: payload,
-        messageId,
-        transport: transportId
-      });
-
-      // Send ACK if not broadcast
-      if (destination !== 'CQ') {
-        this._sendAck(source, messageId);
-      }
-
-      // Mark as delivered
-      const cached = this.messageCache.get(messageId);
-      if (cached) {
-        cached.delivered = true;
-      }
-
+      this._deliverData(payload, source, destination, messageId, transportId);
     } else {
       // Try to relay packet if we're a hub
       const relayed = this._relayPacket(packet, transportId);
       if (!relayed) {
         console.log(`[BackboneManager] Unable to forward packet: ${source} -> ${destination}`);
       }
+    }
+  }
+
+  /**
+   * Deliver a fully-received (possibly reassembled) data payload addressed
+   * to this node: detect Winlink encapsulation, otherwise emit 'data' for
+   * generic subscribers (BBSSync, APRSDistributor, ...), send an ACK, and
+   * mark the packet delivered in the dedup cache.
+   * @private
+   */
+  _deliverData(payload, source, destination, messageId, transportId) {
+    // Check if this is a Winlink message
+    try {
+      // Try to parse as JSON to detect Winlink encapsulation
+      const possibleWinlink = JSON.parse(payload.toString('utf8'));
+
+      if (possibleWinlink.from && possibleWinlink.to && possibleWinlink.type && possibleWinlink.data) {
+        // This looks like a Winlink message
+        console.log(`[BackboneManager] Detected Winlink message: ${possibleWinlink.from} → ${possibleWinlink.to}`);
+
+        if (this.winlinkForwarder) {
+          this.winlinkForwarder.receiveMessage(messageId, payload);
+        }
+
+        // Send ACK
+        if (destination !== 'CQ') {
+          this._sendAck(source, messageId);
+        }
+
+        // Mark as delivered
+        const cached = this.messageCache.get(messageId);
+        if (cached) {
+          cached.delivered = true;
+        }
+
+        return;
+      }
+    } catch (e) {
+      // Not JSON or not Winlink format, treat as regular data
+    }
+
+    // Regular data packet
+    this.monitoringManager?.recordPacketReceived(source, payload.length);
+
+    this.emit('data', {
+      source,
+      destination,
+      data: payload,
+      messageId,
+      transport: transportId
+    });
+
+    // Send ACK if not broadcast
+    if (destination !== 'CQ') {
+      this._sendAck(source, messageId);
+    }
+
+    // Mark as delivered
+    const cached = this.messageCache.get(messageId);
+    if (cached) {
+      cached.delivered = true;
+    }
+  }
+
+  /**
+   * Handle a FRAGMENTED packet: decode its fragment header, hand the piece
+   * to FragmentationManager, and deliver the reassembled payload (via the
+   * same path as a normal DATA packet) once all fragments have arrived.
+   * @private
+   */
+  _handleFragmented(packet, transportId) {
+    const { destination, source, payload, messageId } = packet;
+
+    if (destination !== this.localCallsign && destination !== 'CQ') {
+      const relayed = this._relayPacket(packet, transportId);
+      if (!relayed) {
+        console.log(`[BackboneManager] Unable to forward fragment: ${source} -> ${destination}`);
+      }
+      return;
+    }
+
+    if (!this.fragmentationManager) {
+      console.warn('[BackboneManager] Received FRAGMENTED packet but fragmentation is not initialized; dropping');
+      return;
+    }
+
+    try {
+      const header = FragmentationManager.decodeFragmentHeader(payload.slice(0, 32));
+      const fragmentPayload = payload.slice(32, 32 + header.payloadLength);
+
+      const complete = this.fragmentationManager.processFragment({
+        messageId: header.messageId,
+        fragmentNum: header.fragmentNum,
+        totalFragments: header.totalFragments,
+        payload: fragmentPayload
+      });
+
+      // ACK each fragment individually so the sender's per-packet
+      // reliability/retry tracking works the same as for unfragmented data.
+      if (destination !== 'CQ') {
+        this._sendAck(source, messageId);
+      }
+      const cached = this.messageCache.get(messageId);
+      if (cached) cached.delivered = true;
+
+      if (complete) {
+        console.log(`[BackboneManager] Reassembled ${complete.length}-byte message from ${source} (${header.totalFragments} fragments)`);
+        this._deliverData(complete, source, destination, header.messageId, transportId);
+      }
+    } catch (error) {
+      console.error('[BackboneManager] Error handling fragment:', error.message);
     }
   }
 
@@ -863,11 +1018,30 @@ class BackboneManager extends EventEmitter {
       throw new Error('Backbone not enabled');
     }
 
+    // PacketFormat requires a Buffer payload (it calls payload.length and
+    // Buffer.concat on it). Several callers build plain JS objects for
+    // convenience (e.g. { type: 'ping', ... }) - coerce those to a JSON
+    // Buffer here so every caller doesn't have to remember to do it.
+    let payload = data;
+    if (typeof data === 'string') {
+      payload = Buffer.from(data);
+    } else if (!Buffer.isBuffer(data)) {
+      payload = Buffer.from(JSON.stringify(data));
+    }
+
+    // Fragment large payloads (mainly for RF, whose MTU is far below what
+    // Internet links can carry) into multiple FRAGMENTED packets that get
+    // reassembled on the receiving end (see _handleFragmented). Below the
+    // MTU, this is a no-op pass-through to the normal single-DATA-packet path.
+    if (this.fragmentationManager && this.fragmentationManager.needsFragmentation(payload)) {
+      return this._sendFragmented(destination, payload, options);
+    }
+
     // Create DATA packet
     const packet = PacketFormat.createData(
       this.localCallsign,
       destination,
-      data,
+      payload,
       options
     );
 
@@ -895,6 +1069,56 @@ class BackboneManager extends EventEmitter {
   }
 
   /**
+   * Split a large payload into FRAGMENTED packets and enqueue each one
+   * through the normal message queue (so they get the same priority/QoS/
+   * retry handling as any other packet).
+   * @private
+   * @returns {Promise<String>} The fragmentation message ID (distinct from
+   *   any individual fragment's own wire messageId)
+   */
+  async _sendFragmented(destination, payload, options = {}) {
+    const fragMessageId = crypto.randomBytes(8).toString('hex'); // 16 chars, fits the fragment header's messageId field
+    const fragments = this.fragmentationManager.fragment(fragMessageId, payload);
+
+    for (const fragment of fragments) {
+      const fragmentPacketPayload = Buffer.concat([
+        FragmentationManager.encodeFragmentHeader(fragment),
+        fragment.payload
+      ]);
+
+      const packet = PacketFormat.encode({
+        type: PacketType.DATA,
+        source: this.localCallsign,
+        destination,
+        payload: fragmentPacketPayload,
+        priority: options.priority !== undefined ? options.priority : Priority.NORMAL,
+        flags: (options.flags || PacketFlags.NONE) | PacketFlags.FRAGMENTED,
+        routingInfo: options.routingInfo || {},
+        ttl: options.ttl
+      });
+
+      const decoded = PacketFormat.decode(packet);
+
+      const queued = this.messageQueue.enqueue({
+        messageId: decoded.messageId,
+        destination,
+        source: this.localCallsign,
+        packet,
+        priority: options.priority !== undefined ? options.priority : Priority.NORMAL,
+        options,
+        timestamp: Date.now(),
+        retries: 0
+      });
+
+      if (!queued) {
+        throw new Error(`Message queue full, fragment ${fragment.fragmentNum + 1}/${fragment.totalFragments} of ${fragMessageId} dropped`);
+      }
+    }
+
+    return fragMessageId;
+  }
+
+  /**
    * Process message queue
    * Called periodically to send queued messages
    * @private
@@ -912,13 +1136,15 @@ class BackboneManager extends EventEmitter {
       return;
     }
 
+    let transportId = null;
+    const sendStart = Date.now();
     try {
       // Select best transport
       const transport = this._selectTransport(message.destination, message.options);
-      
+
       if (!transport) {
         console.warn(`[BackboneManager] No transport available for ${message.destination}, re-queuing`);
-        
+
         // Re-queue if retries left
         if (message.retries < 5) {
           message.retries++;
@@ -930,20 +1156,29 @@ class BackboneManager extends EventEmitter {
         return;
       }
 
+      for (const [id, t] of this.transports) {
+        if (t === transport) { transportId = id; break; }
+      }
+
       // Send packet
       await transport.send(message.destination, message.packet, message.options);
-      
+      this.monitoringManager?.recordPacketSent(message.destination, message.packet.length);
+      this.loadBalancer?.recordSuccess({ destination: message.destination, nextHop: transportId }, Date.now() - sendStart);
+
       // Track with reliability manager for ACK
       if (this.reliabilityManager && message.options?.requireAck !== false) {
         this.reliabilityManager.trackMessage(message.messageId, message);
       }
-      
+
       console.log(`[BackboneManager] Sent message ${message.messageId} to ${message.destination} (queue: ${this.messageQueue.size()})`);
       this.emit('message-sent', message.messageId, message.destination);
 
     } catch (error) {
       console.error(`[BackboneManager] Error sending message ${message.messageId}:`, error.message);
-      
+      if (transportId) {
+        this.loadBalancer?.recordFailure({ destination: message.destination, nextHop: transportId }, error.message);
+      }
+
       // Re-queue if retries left
       if (message.retries < 5) {
         message.retries++;
@@ -1036,19 +1271,32 @@ class BackboneManager extends EventEmitter {
     // Fallback to simple neighbor lookup (backward compatibility)
     const neighbor = this.neighbors.get(destination);
     if (neighbor) {
-      // Prefer Internet if configured
-      if (this.config.routing?.preferInternet) {
-        if (internet && internet.isAvailable() && neighbor.transports.includes('internet')) {
-          return internet;
+      const candidateIds = neighbor.transports.filter(id => {
+        const t = this.transports.get(id);
+        return t && t.isAvailable();
+      });
+
+      // Genuinely dual-homed neighbor (e.g. reachable via both RF and
+      // Internet): this is the one place a single destination actually
+      // has multiple real candidate routes to choose between, so it's
+      // where LoadBalancer can do real work (see LoadBalancer.js header
+      // for why it can't be applied to multi-hop routing table entries).
+      if (candidateIds.length > 1 && this.loadBalancer) {
+        const routeCandidates = candidateIds.map(id => ({ destination, nextHop: id, transportId: id }));
+        const selected = this.loadBalancer.selectRoute(destination, routeCandidates);
+        const selectedTransport = selected && this.transports.get(selected.transportId);
+        if (selectedTransport) {
+          return selectedTransport;
         }
       }
 
-      // Use first available transport that reaches this neighbor
-      for (const transportId of neighbor.transports) {
-        const transport = this.transports.get(transportId);
-        if (transport && transport.isAvailable()) {
-          return transport;
-        }
+      // Prefer Internet if configured
+      if (this.config.routing?.preferInternet && candidateIds.includes('internet')) {
+        return this.transports.get('internet');
+      }
+
+      if (candidateIds.length > 0) {
+        return this.transports.get(candidateIds[0]);
       }
     }
 
@@ -1410,6 +1658,18 @@ class BackboneManager extends EventEmitter {
       this.reliabilityManager.stop();
     }
 
+    if (this.monitoringManager) {
+      this.monitoringManager.shutdown();
+    }
+
+    if (this.loadBalancer) {
+      this.loadBalancer.shutdown();
+    }
+
+    if (this.fragmentationManager) {
+      this.fragmentationManager.stop();
+    }
+
     // Stop user registry
     if (this.userRegistry) {
       await this.userRegistry.stop();
@@ -1417,7 +1677,7 @@ class BackboneManager extends EventEmitter {
 
     // Stop Winlink forwarder
     if (this.winlinkForwarder) {
-      this.winlinkForwarder.stop();
+      await this.winlinkForwarder.stop();
     }
 
     // Stop BBS sync
@@ -1537,6 +1797,31 @@ class BackboneManager extends EventEmitter {
     // Winlink forwarder status
     if (this.winlinkForwarder) {
       status.winlinkForwarder = this.winlinkForwarder.getStats();
+    }
+
+    // Outbound message store (persistence) status
+    if (this.messageStore) {
+      status.messageStore = this.messageStore.getStats();
+    }
+
+    if (this.monitoringManager) {
+      status.monitoring = this.monitoringManager.getMetrics();
+    }
+
+    if (this.loadBalancer) {
+      status.loadBalancer = this.loadBalancer.getStats();
+    }
+
+    if (this.fragmentationManager) {
+      status.fragmentation = this.fragmentationManager.getStats();
+    }
+
+    if (this.aprsDistributor) {
+      status.aprsDistribution = this.aprsDistributor.getStats();
+    }
+
+    if (this.weatherParser) {
+      status.weather = this.weatherParser.getStats();
     }
 
     // BBS sync status

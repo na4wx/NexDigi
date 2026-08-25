@@ -57,6 +57,13 @@ class WinlinkForwarder extends EventEmitter {
     this.cmsGateway = config.cmsGateway || false;
     this.messageTimeout = config.messageTimeout || 3600000; // 1 hour
     this.retryDelay = config.retryDelay || 300000; // 5 minutes
+
+    // Optional disk-backed persistence (MessageStore) so outbound messages
+    // survive a server restart instead of only living in pendingMessages.
+    // Additive: pendingMessages remains the source of truth for in-flight
+    // tracking; the store is best-effort and failures here never block
+    // forwarding.
+    this.messageStore = config.messageStore || null;
     
     // Message tracking
     this.pendingMessages = new Map(); // messageId -> { message, status, timestamp, attempts }
@@ -82,45 +89,96 @@ class WinlinkForwarder extends EventEmitter {
   /**
    * Start the forwarder
    */
-  start() {
+  async start() {
     if (this.started) return;
-    
+
     console.log(`[WinlinkForwarder] Starting for node ${this.localCallsign}` +
       (this.cmsGateway ? ' (CMS Gateway)' : ''));
-    
+
     // Listen for backbone events
     if (this.backboneManager) {
       this.backboneManager.on('message-acknowledged', (messageId, rtt) => {
         this._handleAck(messageId, rtt);
       });
-      
+
       this.backboneManager.on('message-failed', (messageId, reason) => {
         this._handleFailure(messageId, reason);
       });
     }
-    
+
+    this.started = true;
+
+    // Load any messages persisted from a previous run and retry them now
+    // that the forwarder (and hopefully the backbone) is back up.
+    if (this.messageStore) {
+      try {
+        await this.messageStore.start();
+        await this._resumePersistedMessages();
+      } catch (error) {
+        console.error('[WinlinkForwarder] Failed to load persisted messages:', error.message);
+      }
+    }
+
     // Start cleanup timer
     this.cleanupTimer = setInterval(() => {
       this._cleanupOldMessages();
     }, 60000); // Every minute
-    
-    this.started = true;
+
     console.log('[WinlinkForwarder] Started');
+  }
+
+  /**
+   * Re-queue messages that were persisted (queued/forwarded but not yet
+   * delivered/failed) by MessageStore before a restart.
+   * @private
+   */
+  async _resumePersistedMessages() {
+    if (!this.messageStore || typeof this.messageStore.queues?.entries !== 'function') return;
+
+    let resumed = 0;
+    for (const [userCallsign, queue] of this.messageStore.queues.entries()) {
+      for (const entry of queue) {
+        if (entry.status !== 'queued' && entry.status !== 'forwarded') continue;
+        if (this.pendingMessages.has(entry.messageId)) continue;
+
+        try {
+          await this.forwardMessage({
+            from: entry.from,
+            to: entry.to,
+            type: entry.type,
+            data: entry.data,
+            mid: entry.messageId,
+            metadata: entry.metadata
+          }, true);
+          resumed++;
+        } catch (error) {
+          console.warn(`[WinlinkForwarder] Could not resume persisted message ${entry.messageId}: ${error.message}`);
+        }
+      }
+    }
+
+    if (resumed > 0) {
+      console.log(`[WinlinkForwarder] Resumed ${resumed} message(s) persisted from a previous run`);
+    }
   }
   
   /**
    * Stop the forwarder
    */
-  stop() {
+  async stop() {
     if (!this.started) return;
-    
+
     console.log('[WinlinkForwarder] Stopping...');
-    
+
     if (this.cleanupTimer) {
       clearInterval(this.cleanupTimer);
       this.cleanupTimer = null;
     }
-    
+
+    if (this.messageStore) {
+      try { await this.messageStore.stop(); } catch (err) { console.warn('[WinlinkForwarder] Error stopping message store:', err.message); }
+    }
+
     this.started = false;
     console.log('[WinlinkForwarder] Stopped');
   }
@@ -136,33 +194,44 @@ class WinlinkForwarder extends EventEmitter {
    * @param {Object} message.metadata - Additional metadata
    * @returns {Promise<String>} Message ID
    */
-  async forwardMessage(message) {
+  async forwardMessage(message, _resuming = false) {
     if (!this.started) {
       throw new Error('WinlinkForwarder not started');
     }
-    
+
     // Generate message ID if not provided
     const messageId = message.mid || this._generateMessageId();
-    
+
     console.log(`[WinlinkForwarder] Forwarding message ${messageId}: ${message.from} → ${message.to} (${message.type})`);
-    
+
     // Validate message
     if (!message.from || !message.to || !message.data) {
       throw new Error('Invalid message: missing required fields');
     }
-    
+
+    // Persist to disk before attempting delivery, so it survives a crash
+    // or restart between now and delivery/ack. Skipped when replaying a
+    // message that's already in the store (on startup resume).
+    if (this.messageStore && !_resuming) {
+      try {
+        await this.messageStore.queueMessage(message.from, { ...message, mid: messageId });
+      } catch (error) {
+        console.warn(`[WinlinkForwarder] Could not persist message ${messageId}: ${error.message}`);
+      }
+    }
+
     // Determine routing
     const route = await this._determineRoute(message);
-    
+
     if (!route) {
       console.error(`[WinlinkForwarder] Cannot determine route for ${message.to}`);
       this.stats.failed++;
       this.emit('forward-failed', messageId, message, 'No route to destination');
       throw new Error(`No route to destination: ${message.to}`);
     }
-    
+
     console.log(`[WinlinkForwarder] Route: ${route.type} to ${route.destination}`);
-    
+
     // Track message
     this.pendingMessages.set(messageId, {
       message,
@@ -308,8 +377,29 @@ class WinlinkForwarder extends EventEmitter {
         };
       }
       
-      // TODO: Query service registry for CMS gateway
-      // For now, return null (no CMS gateway available)
+      // Query the backbone's service registry (populated from neighbor
+      // heartbeats) for nodes offering 'winlink-cms'.
+      const providers = this.backboneManager?.services?.get('winlink-cms');
+      if (providers && providers.size > 0) {
+        // Prefer the lowest-cost reachable provider if the routing engine
+        // can rank them; otherwise just take the first known provider.
+        let best = null;
+        let bestCost = Infinity;
+        for (const provider of providers) {
+          const providerRoute = this.backboneManager?.routingEngine?.getRoute(provider);
+          const cost = providerRoute ? providerRoute.cost : 0;
+          if (cost < bestCost) {
+            bestCost = cost;
+            best = provider;
+          }
+        }
+        return {
+          type: 'remote-cms',
+          destination: best || providers.values().next().value
+        };
+      }
+
+      console.warn('[WinlinkForwarder] No CMS gateway found in service registry');
       return null;
     }
     
@@ -370,9 +460,15 @@ class WinlinkForwarder extends EventEmitter {
       tracking.attempts++;
       tracking.backboneMessageId = backboneMessageId;
     }
-    
+
+    if (this.messageStore) {
+      this.messageStore.markForwarded(message.from, messageId).catch(err => {
+        console.warn(`[WinlinkForwarder] Could not mark ${messageId} forwarded in store: ${err.message}`);
+      });
+    }
+
     // Update stats
-    if (route.type === 'remote') {
+    if (route.type === 'remote' || route.type === 'remote-cms') {
       this.stats.toRemote++;
     } else if (route.type === 'local') {
       this.stats.toLocal++;
@@ -429,16 +525,22 @@ class WinlinkForwarder extends EventEmitter {
     
     // Mark as delivered
     tracking.status = MessageStatus.DELIVERED;
-    
+
     this.deliveredMessages.set(messageId, {
       timestamp: Date.now(),
       recipient: tracking.message.to,
       rtt
     });
-    
+
     this.pendingMessages.delete(messageId);
     this.stats.delivered++;
-    
+
+    if (this.messageStore) {
+      this.messageStore.markDelivered(tracking.message.from, messageId).catch(err => {
+        console.warn(`[WinlinkForwarder] Could not mark ${messageId} delivered in store: ${err.message}`);
+      });
+    }
+
     this.emit('message-delivered', messageId, tracking.message, rtt);
   }
   
@@ -468,7 +570,13 @@ class WinlinkForwarder extends EventEmitter {
       tracking.status = MessageStatus.FAILED;
       this.pendingMessages.delete(messageId);
       this.stats.failed++;
-      
+
+      if (this.messageStore) {
+        this.messageStore.markFailed(tracking.message.from, messageId, reason).catch(err => {
+          console.warn(`[WinlinkForwarder] Could not mark ${messageId} failed in store: ${err.message}`);
+        });
+      }
+
       this.emit('message-failed', messageId, tracking.message, reason);
     }
   }
