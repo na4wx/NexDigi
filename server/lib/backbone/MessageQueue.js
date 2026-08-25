@@ -27,15 +27,16 @@ class MessageQueue extends EventEmitter {
    * @param {Number} config.maxSizePerPriority - Max size per priority queue (default: 500)
    * @param {Number} config.lowPriorityDropThreshold - Drop LOW when queue > this % full (default: 0.8)
    * @param {Number} config.normalPriorityDropThreshold - Drop NORMAL when queue > this % full (default: 0.9)
+   * @param {Number} config.bandwidthLimit - Token-bucket rate limit in bytes/sec (default: 0 = unlimited)
    */
   constructor(config = {}) {
     super();
-    
+
     this.maxSize = config.maxSize || 1000;
     this.maxSizePerPriority = config.maxSizePerPriority || 500;
     this.lowPriorityDropThreshold = config.lowPriorityDropThreshold || 0.8;
     this.normalPriorityDropThreshold = config.normalPriorityDropThreshold || 0.9;
-    
+
     // Priority queues: priority level -> array of messages
     this.queues = {
       [Priority.EMERGENCY]: [],
@@ -43,7 +44,10 @@ class MessageQueue extends EventEmitter {
       [Priority.NORMAL]: [],
       [Priority.LOW]: []
     };
-    
+
+    // Token-bucket traffic shaping (0 = unlimited)
+    this.setBandwidthLimit(config.bandwidthLimit || 0);
+
     // Statistics
     this.stats = {
       enqueued: 0,
@@ -138,6 +142,67 @@ class MessageQueue extends EventEmitter {
     }
     
     return null;
+  }
+
+  /**
+   * Set (or disable) the bandwidth limit and reset the token bucket
+   * @param {Number} bytesPerSecond - Rate limit in bytes/sec (0 = unlimited)
+   */
+  setBandwidthLimit(bytesPerSecond) {
+    this.bandwidthLimit = bytesPerSecond || 0;
+    this.tokenBucket = {
+      tokens: this.bandwidthLimit,
+      maxTokens: this.bandwidthLimit,
+      lastRefill: Date.now()
+    };
+  }
+
+  /**
+   * Refill the token bucket based on elapsed time
+   * @private
+   */
+  _refillTokenBucket() {
+    if (this.bandwidthLimit <= 0) return;
+    const now = Date.now();
+    const elapsedSec = (now - this.tokenBucket.lastRefill) / 1000;
+    this.tokenBucket.tokens = Math.min(
+      this.tokenBucket.maxTokens,
+      this.tokenBucket.tokens + this.bandwidthLimit * elapsedSec
+    );
+    this.tokenBucket.lastRefill = now;
+  }
+
+  /**
+   * Estimate a message's on-wire size in bytes for shaping purposes
+   * @private
+   */
+  _estimateSize(message) {
+    if (Buffer.isBuffer(message.packet)) return message.packet.length;
+    if (typeof message.packet === 'string') return Buffer.byteLength(message.packet);
+    return 64; // conservative fallback for control/ack-style messages
+  }
+
+  /**
+   * Dequeue the highest-priority message only if enough bandwidth budget is
+   * available (unlimited when no bandwidthLimit is configured). Unlike
+   * dequeue(), this does not remove the message from the queue when the
+   * budget is insufficient, so callers should retry on the next tick.
+   * @returns {Object|null} Message or null if empty / rate-limited
+   */
+  dequeueWithinBudget() {
+    if (this.bandwidthLimit <= 0) return this.dequeue();
+
+    const next = this.peek();
+    if (!next) return null;
+
+    this._refillTokenBucket();
+    const size = this._estimateSize(next);
+    if (this.tokenBucket.tokens < size) {
+      return null; // Rate-limited this tick; message stays queued
+    }
+
+    this.tokenBucket.tokens -= size;
+    return this.dequeue();
   }
 
   /**
@@ -265,6 +330,8 @@ class MessageQueue extends EventEmitter {
       },
       capacity: this.maxSize,
       fillRatio: this.getFillRatio(),
+      bandwidthLimit: this.bandwidthLimit,
+      tokensAvailable: Math.round(this.tokenBucket.tokens),
       lifetime: {
         enqueued: this.stats.enqueued,
         dequeued: this.stats.dequeued,

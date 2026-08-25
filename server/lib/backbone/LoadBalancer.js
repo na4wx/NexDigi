@@ -1,12 +1,21 @@
 /**
  * LoadBalancer.js
- * 
+ *
  * Load balancing for multi-path routing:
  * - Multiple route selection
  * - Weighted distribution based on route quality
  * - Round-robin and least-loaded algorithms
  * - Route health tracking
  * - Automatic failover on route failure
+ *
+ * NOT CURRENTLY WIRED IN: selectRoute(destination, availableRoutes) needs a
+ * set of candidate routes to choose between, but RoutingEngine.js computes
+ * a single best-cost path per destination via Dijkstra (see
+ * RoutingEngine.calculateRoutes/getRoute) and BackboneManager._selectTransport
+ * consumes that single route directly. Wiring this in for real requires
+ * RoutingEngine to track multiple candidate next-hops/transports per
+ * destination first (a k-shortest-paths style change) - that's a routing
+ * feature to design deliberately, not a one-line integration.
  */
 
 const EventEmitter = require('events');

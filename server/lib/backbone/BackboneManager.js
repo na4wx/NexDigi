@@ -129,11 +129,14 @@ class BackboneManager extends EventEmitter {
     console.log('[BackboneManager] Routing engine initialized');
 
     // Initialize message queue
+    const qos = this.config.qos || {};
     this.messageQueue = new MessageQueue({
       maxSize: this.config.queue?.maxSize || 1000,
       maxSizePerPriority: this.config.queue?.maxSizePerPriority || 500,
       lowPriorityDropThreshold: this.config.queue?.lowPriorityDropThreshold || 0.8,
-      normalPriorityDropThreshold: this.config.queue?.normalPriorityDropThreshold || 0.9
+      normalPriorityDropThreshold: this.config.queue?.normalPriorityDropThreshold || 0.9,
+      // From nexnetSettings.json's `qos` section (routes/nexnet.js)
+      bandwidthLimit: (qos.enabled !== false) ? (qos.bandwidthLimit || 0) : 0
     });
 
     this.messageQueue.on('dropped', (message, reason) => {
@@ -307,6 +310,20 @@ class BackboneManager extends EventEmitter {
     // Merge constructor config over loaded config (constructor takes precedence)
     this.config = { ...this.config, ...constructorConfig };
     console.log(`[BackboneManager] Configuration merged, enabled: ${this.config.enabled}`);
+
+    // nexnetSettings.json (managed by routes/nexnet.js) is a separate file
+    // covering QoS/load-balancing knobs; fold its `qos` section in here so
+    // it actually reaches the message queue's bandwidth shaper below.
+    try {
+      const nexnetPath = path.join(path.dirname(this.configPath), 'nexnetSettings.json');
+      const nexnetData = await fs.readFile(nexnetPath, 'utf8');
+      const nexnetSettings = JSON.parse(nexnetData);
+      if (nexnetSettings.qos) this.config.qos = nexnetSettings.qos;
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        console.error('[BackboneManager] Error loading nexnetSettings.json:', error.message);
+      }
+    }
   }
 
   /**
@@ -887,9 +904,10 @@ class BackboneManager extends EventEmitter {
       return;
     }
 
-    // Process one message per tick to avoid blocking
-    const message = this.messageQueue.dequeue();
-    
+    // Process one message per tick to avoid blocking, respecting the
+    // configured bandwidth limit (token bucket) if any
+    const message = this.messageQueue.dequeueWithinBudget();
+
     if (!message) {
       return;
     }

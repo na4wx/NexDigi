@@ -228,14 +228,19 @@ router.post('/settings', async (req, res) => {
     // Save to file
     await saveSettings(mergedSettings);
 
-    // NOTE: these settings (QoS, load balancing, etc.) are not currently
-    // consumed by BackboneManager or any running subsystem - QoSManager.js
-    // and LoadBalancer.js are never instantiated anywhere in the codebase.
-    // Restarting the server will NOT apply these values either; they are
-    // saved for a future integration but have no runtime effect yet.
+    // NOTE on runtime effect:
+    // - qos.* IS applied: BackboneManager re-reads nexnetSettings.json on
+    //   every (re)initialize and feeds qos.bandwidthLimit into the message
+    //   queue's token-bucket shaper. Requires a backbone restart to pick up
+    //   (see POST /api/backbone/restart, if available) - not yet hot-applied
+    //   to an already-running instance.
+    // - loadBalancing.* is NOT applied: LoadBalancer.js is not wired into
+    //   BackboneManager. RoutingEngine only computes a single best-cost path
+    //   per destination today, so there is nothing for it to load-balance
+    //   across yet (see the note at the top of LoadBalancer.js).
     res.json({
       success: true,
-      message: 'Settings saved, but are not yet wired into the running backbone/QoS subsystem (no runtime effect).',
+      message: 'Settings saved. QoS bandwidth limiting applies on next backbone restart; load-balancing settings have no runtime effect yet (not wired in).',
       settings: mergedSettings
     });
   } catch (error) {
