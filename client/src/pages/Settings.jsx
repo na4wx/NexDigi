@@ -28,7 +28,7 @@ export default function SettingsPage() {
         </Box>
       )}
 
-      <Box sx={{ position: 'sticky', top: 64, zIndex: 1200, backgroundColor: 'background.paper', borderBottom: '1px solid rgba(0,0,0,0.08)' }} display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+      <Box sx={{ position: 'sticky', top: 64, zIndex: 1200, backgroundColor: 'background.paper', borderBottom: '1px solid', borderColor: 'divider' }} display="flex" justifyContent="space-between" alignItems="center" mb={2}>
         <Tabs value={tab} onChange={(e, v) => setTab(v)}>
           <Tab label="Channels" />
           <Tab label="Digipeater" />

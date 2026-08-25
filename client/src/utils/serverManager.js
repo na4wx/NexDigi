@@ -159,6 +159,22 @@ export class ServerManager {
   }
 
   /**
+   * Get the base URL (protocol://host) for the active server, e.g.
+   * "http://192.168.1.50:3000". Falls back to this page's own hostname on
+   * the server's default port when no server is configured yet, so early
+   * callers (before setup completes) still hit something reasonable.
+   */
+  getBackendUrl() {
+    const active = this.getActiveServer();
+    if (active && active.host) {
+      const protocol = active.protocol || 'http';
+      const host = active.host.replace(/^https?:\/\//, '');
+      return `${protocol}://${host}`;
+    }
+    return `${location.protocol}//${location.hostname}:3000`;
+  }
+
+  /**
    * Set the active server
    */
   setActiveServer(id) {

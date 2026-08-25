@@ -24,13 +24,13 @@ import { Save as SaveIcon, History as HistoryIcon, Storage as StorageIcon } from
 import axios from 'axios';
 import { serverManager } from '../utils/serverManager';
 
-// Configure axios base URL for API requests
-const api = axios.create({
-  baseURL: `http://${window.location.hostname}:3000`
-});
+// Axios instance for chat settings API requests. baseURL is resolved
+// per-request (not fixed at module load) so it always targets the active
+// server.
+const api = axios.create();
 
-// Add interceptor to include authentication header
 api.interceptors.request.use(config => {
+  config.baseURL = serverManager.getBackendUrl();
   const active = serverManager.getActiveServer();
   if (active && active.password) {
     config.headers['X-UI-Password'] = active.password;

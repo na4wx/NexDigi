@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Box, Typography, Switch, TextField, Button, FormControlLabel, Paper, Alert, Table, TableHead, TableBody, TableRow, TableCell, IconButton, Select, MenuItem, FormControl, InputLabel, FormHelperText } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import axios from 'axios';
+import { serverManager } from '../utils/serverManager';
 
 export default function WinlinkSettings({ setGlobalMessage }) {
-  const backend = `${location.protocol}//${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
   const [cfg, setCfg] = useState({ enabled: false, gatewayCallsign: '', host: '', port: 0, password: '', autoConnect: false, channels: {} });
   const [status, setStatus] = useState({ connected: false, enabled: false, lastError: null });
   const [channels, setChannels] = useState({});

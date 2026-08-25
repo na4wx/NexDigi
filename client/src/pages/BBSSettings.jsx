@@ -17,6 +17,7 @@ import {
   OutlinedInput,
 } from '@mui/material';
 import axios from 'axios';
+import { serverManager } from '../utils/serverManager';
 
 export default function BBSSettings() {
   const [bbsEnabled, setBbsEnabled] = useState(false);
@@ -26,7 +27,7 @@ export default function BBSSettings() {
   const [availableChannels, setAvailableChannels] = useState([]);
   const [saveMessage, setSaveMessage] = useState('');
 
-  const backend = `http://${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
 
   useEffect(() => {
     fetchSettings();

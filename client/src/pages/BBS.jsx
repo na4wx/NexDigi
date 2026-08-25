@@ -25,6 +25,7 @@ import {
   DialogActions,
 } from '@mui/material';
 import axios from 'axios';
+import { serverManager } from '../utils/serverManager';
 
 export default function BBS() {
   const [messages, setMessages] = useState([]);
@@ -44,7 +45,7 @@ export default function BBS() {
     replyTo: null
   });
 
-  const backend = `http://${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
 
   const messageCategories = {
     'P': 'Personal',
@@ -245,8 +246,8 @@ export default function BBS() {
             {getFilteredMessages().map((msg) => (
               <TableRow 
                 key={msg.messageNumber} 
-                sx={{ 
-                  backgroundColor: !msg.read ? '#f3f4f6' : 'inherit',
+                sx={{
+                  backgroundColor: !msg.read ? 'rgba(91, 155, 255, 0.08)' : 'inherit',
                   fontWeight: !msg.read ? 'bold' : 'normal'
                 }}
               >

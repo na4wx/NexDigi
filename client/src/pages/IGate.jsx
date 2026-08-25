@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { Box, Typography, Paper, TextField, Button, Switch, FormControlLabel, Alert, Chip, Divider } from '@mui/material'
+import { serverManager } from '../utils/serverManager'
 
 export default function IGatePage({ setGlobalMessage }) {
-  const API_BASE = `${location.protocol}//${location.hostname}:3000`
+  const API_BASE = serverManager.getBackendUrl()
   const [cfg, setCfg] = useState({ enabled: false, host: '', port: 14580, call: '', pass: '', channels: [] })
   const [status, setStatus] = useState({ connected: false, authenticated: false, enabled: false })
   const [saving, setSaving] = useState(false)

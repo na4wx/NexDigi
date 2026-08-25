@@ -29,6 +29,7 @@ import {
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
 import axios from 'axios';
+import { serverManager } from '../utils/serverManager';
 
 export default function NexNetSettings() {
   const [config, setConfig] = useState(null);
@@ -43,7 +44,7 @@ export default function NexNetSettings() {
   const [publicKey, setPublicKey] = useState(null);
   const [keyGenLoading, setKeyGenLoading] = useState(false);
 
-  const backend = `http://${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
 
   useEffect(() => {
     fetchSettings();

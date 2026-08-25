@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Box, Typography, Paper, List, ListItem, ListItemText, Chip } from '@mui/material';
 import axios from 'axios';
+import { serverManager } from '../utils/serverManager';
 
 export default function ActiveAlerts() {
   const [alerts, setAlerts] = useState([]);
-  const backend = `http://${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
 
   useEffect(() => {
     const fetchAlerts = async () => {

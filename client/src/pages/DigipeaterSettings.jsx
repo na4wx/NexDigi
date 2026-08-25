@@ -34,6 +34,7 @@ import {
 } from '@mui/material';
 import { Settings as SettingsIcon, Close as CloseIcon } from '@mui/icons-material';
 import axios from 'axios';
+import { serverManager } from '../utils/serverManager';
 
 // Channel Configuration Modal
 function ChannelConfigModal({ open, onClose, channel, channelSettings, updateChannelSetting, maxNErrors }) {
@@ -427,7 +428,7 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
   const [configModalOpen, setConfigModalOpen] = useState(false);
   const [selectedChannel, setSelectedChannel] = useState(null);
 
-  const backend = `http://${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
 
   const openChannelConfig = (channel) => {
     setSelectedChannel(channel);
@@ -1108,7 +1109,7 @@ export default function DigipeaterSettings({ setGlobalMessage }) {
         {alertsLoading && <Typography variant="body2">Loading alerts...</Typography>}
         {!alertsLoading && metricAlerts.length === 0 && <Typography variant="body2" color="textSecondary">No recent metric alerts.</Typography>}
         {metricAlerts.map((a, idx) => (
-          <Paper key={idx} sx={{ p: 1, mb: 1, backgroundColor: '#fff6f6' }}>
+          <Paper key={idx} sx={{ p: 1, mb: 1, backgroundColor: 'rgba(248, 81, 73, 0.1)', border: '1px solid rgba(248, 81, 73, 0.3)' }}>
             <Typography variant="body2"><strong>{a.metric}</strong> = {a.value} (threshold {a.threshold})</Typography>
             <Typography variant="caption" color="textSecondary">{new Date(a.ts).toLocaleString()} — {a.message}</Typography>
           </Paper>

@@ -3,9 +3,10 @@ import { Box, Typography, List, ListItem, ListItemText, Paper, Button, TextField
 import DeleteIcon from '@mui/icons-material/Delete'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import MoreVertIcon from '@mui/icons-material/MoreVert'
+import { serverManager } from '../utils/serverManager'
 
 export default function ChannelsPage({ setGlobalMessage, children }) {
-  const API_BASE = `${location.protocol}//${location.hostname}:3000`
+  const API_BASE = serverManager.getBackendUrl()
   const [channels, setChannels] = useState([])
   const [ports, setPorts] = useState([])
   const [loading, setLoading] = useState(false)
@@ -161,7 +162,7 @@ export default function ChannelsPage({ setGlobalMessage, children }) {
               <Box width={80}></Box>
             </Box>
             {channels.map((c) => (
-              <Box key={c.id} display="flex" alignItems="center" py={1.5} px={1} borderTop="1px solid #eee" columnGap={2}>
+              <Box key={c.id} display="flex" alignItems="center" py={1.5} px={1} sx={{ borderTop: '1px solid', borderColor: 'divider' }} columnGap={2}>
                 <Box width={280}>{c.name}</Box>
                 <Box width={180}>
                   <Typography variant="body2">{c.id}</Typography>

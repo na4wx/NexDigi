@@ -47,13 +47,12 @@ import {
 import axios from 'axios';
 import { serverManager } from '../utils/serverManager';
 
-// Configure axios base URL for API requests
-const api = axios.create({
-  baseURL: `http://${window.location.hostname}:3000`
-});
+// Axios instance for chat API requests. baseURL is resolved per-request
+// (not fixed at module load) so it always targets the active server.
+const api = axios.create();
 
-// Add interceptor to include authentication header
 api.interceptors.request.use(config => {
+  config.baseURL = serverManager.getBackendUrl();
   const active = serverManager.getActiveServer();
   if (active && active.password) {
     config.headers['X-UI-Password'] = active.password;
@@ -100,7 +99,7 @@ export default function Chat({ setPage }) {
     const timeout = setTimeout(() => {
       if (!chatInitializedRef.current) {
         setLoading(false);
-        setError('Connection timeout. Please check if the server is running on port 3000.');
+        setError(`Connection timeout. Please check if the server is running at ${serverManager.getBackendUrl()}.`);
         console.error('WebSocket connection timed out after 15 seconds');
       }
     }, 15000); // Increased to 15 seconds
@@ -133,14 +132,14 @@ export default function Chat({ setPage }) {
   
   const connectWebSocket = () => {
     try {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const port = window.location.port && window.location.port !== '5173' ? window.location.port : '3000';
-      
+      const backendUrl = new URL(serverManager.getBackendUrl());
+      const wsProtocol = backendUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+
       // Get password from active server
       const active = serverManager.getActiveServer();
       const password = active?.password || '';
-      const wsUrl = `${protocol}//${window.location.hostname}:${port}${password ? `?password=${encodeURIComponent(password)}` : ''}`;
-      
+      const wsUrl = `${wsProtocol}//${backendUrl.host}${password ? `?password=${encodeURIComponent(password)}` : ''}`;
+
       const socket = new WebSocket(wsUrl);
       
       socket.onopen = () => {
@@ -185,7 +184,7 @@ export default function Chat({ setPage }) {
       
       socket.onerror = (error) => {
         console.error('WebSocket error:', error);
-        setError('WebSocket connection error. Make sure the server is running on port 3000.');
+        setError(`WebSocket connection error. Make sure the server is running at ${serverManager.getBackendUrl()}.`);
         setLoading(false);
       };
       
@@ -521,12 +520,12 @@ export default function Chat({ setPage }) {
             [{formatTimestamp(message.timestamp)}]
           </Typography>
           {isAction ? (
-            <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'purple' }}>
+            <Typography variant="body2" sx={{ fontStyle: 'italic', color: '#c586e8' }}>
               {message.text}
             </Typography>
           ) : (
             <Typography variant="body2">
-              <strong style={{ color: '#1976d2' }}>{message.from}:</strong> {message.text}
+              <strong style={{ color: '#5b9bff' }}>{message.from}:</strong> {message.text}
             </Typography>
           )}
         </Box>
@@ -639,7 +638,7 @@ export default function Chat({ setPage }) {
               </Box>
               
               {/* Messages */}
-              <Box sx={{ flex: 1, overflow: 'auto', bgcolor: 'grey.50' }}>
+              <Box sx={{ flex: 1, overflow: 'auto', bgcolor: 'background.default' }}>
                 {(messages[currentRoom] || []).map((msg, index) => (
                   <React.Fragment key={msg.id || index}>
                     {renderMessage(msg)}

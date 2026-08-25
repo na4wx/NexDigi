@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Box, Typography, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Button, Dialog, DialogTitle, DialogContent, DialogContentText, TextField, TableSortLabel } from '@mui/material'
 import axios from 'axios'
+import { serverManager } from '../utils/serverManager'
 
 export default function LastHeard() {
   const [rows, setRows] = useState([])
@@ -10,7 +11,7 @@ export default function LastHeard() {
   const [sortDir, setSortDir] = useState('desc')
   const [open, setOpen] = useState(false)
   const [selected, setSelected] = useState(null)
-  const backend = `http://${location.hostname}:3000`;
+  const backend = serverManager.getBackendUrl();
 
   const fetch = async () => {
     try {

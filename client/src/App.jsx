@@ -238,17 +238,31 @@ export default function App() {
       
       {/* Main content */}
       <Box sx={{ flex: 1 }}>
-  <AppBar position="sticky" sx={{ top: 0, zIndex: (theme) => theme.zIndex.appBar }}>
-          <Toolbar>
-            <Typography variant="h6" sx={{ flexGrow: 1 }}>NexDigi</Typography>
-            <Button color="inherit" onClick={() => setPage('home')}>Home</Button>
-            <Button color="inherit" onClick={() => setPage('frames')}>Frames</Button>
-            <Button color="inherit" onClick={() => setPage('lastheard')}>Last Heard</Button>
-            {bbsEnabled && <Button color="inherit" onClick={() => setPage('bbs')}>BBS</Button>}
-            {alertsEnabled && <Button color="inherit" onClick={() => setPage('alerts')}>Alerts</Button>}
-            <Button color="inherit" onClick={() => setPage('nexnet')}>NexNet</Button>
-            <Button color="inherit" onClick={() => setPage('chat')}>Chat</Button>
-            <Button color="inherit" onClick={() => setPage('settings')}>Settings</Button>
+        <AppBar position="sticky" elevation={0} sx={{ top: 0, zIndex: (theme) => theme.zIndex.appBar }}>
+          <Toolbar sx={{ gap: 0.5 }}>
+            <Typography variant="h6" sx={{ flexGrow: 1, letterSpacing: 0.3 }}>NexDigi</Typography>
+            {[
+              ['home', 'Home'],
+              ['frames', 'Frames'],
+              ['lastheard', 'Last Heard'],
+              ...(bbsEnabled ? [['bbs', 'BBS']] : []),
+              ...(alertsEnabled ? [['alerts', 'Alerts']] : []),
+              ['nexnet', 'NexNet'],
+              ['chat', 'Chat'],
+              ['settings', 'Settings']
+            ].map(([key, label]) => (
+              <Button
+                key={key}
+                onClick={() => setPage(key)}
+                sx={{
+                  color: page === key ? 'primary.light' : 'text.secondary',
+                  bgcolor: page === key ? 'rgba(91, 155, 255, 0.12)' : 'transparent',
+                  '&:hover': { bgcolor: page === key ? 'rgba(91, 155, 255, 0.18)' : 'action.hover' }
+                }}
+              >
+                {label}
+              </Button>
+            ))}
           </Toolbar>
         </AppBar>
 
@@ -371,7 +385,9 @@ export default function App() {
               <Box display="flex" gap={2} alignItems="center" marginTop={1} marginBottom={1}>
                 <Typography variant="body2">Showing {frames.length} recent frames</Typography>
                 <Box display="flex" alignItems="center" gap={1}>
-                  <label style={{ fontSize: 12, color: '#666' }}><input type="checkbox" checked={showHex} onChange={(e) => setShowHex(e.target.checked)} style={{ marginRight: 6 }} />Show hex</label>
+                  <Typography component="label" variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center' }}>
+                    <input type="checkbox" checked={showHex} onChange={(e) => setShowHex(e.target.checked)} style={{ marginRight: 6 }} />Show hex
+                  </Typography>
                 </Box>
               </Box>
 
@@ -423,11 +439,21 @@ export default function App() {
       </Box>
 
       {/* Footer */}
-      <footer style={{ textAlign: 'center', marginTop: '20px', padding: '1rem', background: '#f5f5f5' }}>
-        <Typography variant="body2" color="textSecondary">
-          <a href='https://na4wx.com' target='__blank'>© 2025 Jordan G Webb, NA4WX</a>
+      <Box
+        component="footer"
+        sx={{
+          textAlign: 'center',
+          mt: 3,
+          py: 2,
+          bgcolor: 'background.paper',
+          borderTop: '1px solid',
+          borderColor: 'divider'
+        }}
+      >
+        <Typography variant="body2" color="text.secondary">
+          <a href='https://na4wx.com' target='__blank' style={{ color: 'inherit' }}>© 2025 Jordan G Webb, NA4WX</a>
         </Typography>
-      </footer>
+      </Box>
     </Box>
   )
 }

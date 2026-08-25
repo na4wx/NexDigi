@@ -40,10 +40,10 @@ import {
   Cast as CastIcon,
   NetworkCheck as NetworkCheckIcon
 } from '@mui/icons-material';
-
-const API_BASE = `http://${window.location.hostname}:3000`;
+import { serverManager } from '../utils/serverManager';
 
 export default function NexNet({ setPage }) {
+  const API_BASE = serverManager.getBackendUrl();
   const [status, setStatus] = useState(null);
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -541,19 +541,19 @@ export default function NexNet({ setPage }) {
 
       {/* Getting Started (when disabled) */}
       {!status?.enabled && (
-        <Paper 
-          elevation={3}
-          sx={{ 
-            p: 4, 
-            background: 'linear-gradient(135deg, #E3F2FD 0%, #BBDEFB 100%)',
-            border: 2,
-            borderColor: 'primary.light'
+        <Paper
+          elevation={0}
+          sx={{
+            p: 4,
+            background: 'linear-gradient(135deg, rgba(91,155,255,0.16) 0%, rgba(91,155,255,0.05) 100%)',
+            border: '1px solid',
+            borderColor: 'primary.dark'
           }}
         >
           <Box sx={{ display: 'flex', gap: 3, alignItems: 'flex-start' }}>
             <RouterIcon sx={{ fontSize: 60, color: 'primary.main' }} />
             <Box sx={{ flex: 1 }}>
-              <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.dark', mb: 2 }}>
+              <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'primary.light', mb: 2 }}>
                 Getting Started with NexNet
               </Typography>
               <List>
@@ -586,7 +586,7 @@ export default function NexNet({ setPage }) {
                   />
                 </ListItem>
               </List>
-              <Paper elevation={1} sx={{ p: 2, mt: 2, bgcolor: 'rgba(255,255,255,0.8)' }}>
+              <Paper elevation={0} sx={{ p: 2, mt: 2, bgcolor: 'rgba(13, 17, 23, 0.5)', border: '1px solid', borderColor: 'divider' }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 1, display: 'flex', alignItems: 'center', gap: 1 }}>
                   <SettingsIcon fontSize="small" /> Quick Setup
                 </Typography>
