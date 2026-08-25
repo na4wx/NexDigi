@@ -196,54 +196,87 @@ export class ServerManager {
   }
 
   /**
-   * Verify server password
+   * Verify server password.
+   * Returns a reason so callers can tell "server unreachable" apart from
+   * "server reached, password rejected" instead of collapsing both to a
+   * single boolean (which used to surface as a misleading "Invalid
+   * password" even when the host/port was simply wrong).
+   * @returns {Promise<{ok: boolean, reason: 'valid'|'invalid'|'unreachable', message: string}>}
    */
   async verifyPassword(host, password, protocol = 'http') {
+    const cleanHost = host.replace(/^https?:\/\//, '');
+    let response;
     try {
-      const cleanHost = host.replace(/^https?:\/\//, '');
-      const response = await fetch(`${protocol}://${cleanHost}/api/auth/verify`, {
+      response = await fetch(`${protocol}://${cleanHost}/api/auth/verify`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ password })
       });
-      
-      const data = await response.json();
-      return data.success === true;
     } catch (err) {
-      console.error('Password verification failed:', err);
-      return false;
+      // fetch() only throws for network-level failures (DNS, connection
+      // refused, CORS, timeout) - never for a reachable server returning
+      // an error status. So this is always "couldn't reach the server".
+      console.error('Could not reach server for password verification:', err);
+      return { ok: false, reason: 'unreachable', message: `Could not reach server at ${cleanHost}. Check the address and that the server is running.` };
     }
+
+    // A 404/500/etc here means *something* answered but it isn't NexDigi's
+    // auth endpoint (wrong port pointing at an unrelated service, wrong
+    // path, proxy misconfiguration, ...) - that's a different problem than
+    // "reached NexDigi, password rejected" (which replies 401 with JSON).
+    if (response.status === 404) {
+      return { ok: false, reason: 'unreachable', message: `No NexDigi server found at ${cleanHost} (got 404). Check the address and port.` };
+    }
+
+    let data;
+    try {
+      data = await response.json();
+    } catch (err) {
+      return { ok: false, reason: 'unreachable', message: `Server at ${cleanHost} did not return a valid response (is this a NexDigi server?).` };
+    }
+
+    if (data && data.success === true) {
+      return { ok: true, reason: 'valid', message: 'OK' };
+    }
+
+    // Defensively coerce whatever the server sent into a renderable string -
+    // an API error field is not guaranteed to be a string (some servers/
+    // proxies send {code, message} or similar objects), and passing a raw
+    // object into React as children crashes the whole tree.
+    const rawMessage = (data && (data.message || data.error)) || 'Invalid password';
+    const safeMessage = typeof rawMessage === 'string' ? rawMessage : (rawMessage && rawMessage.message) || 'Invalid password';
+    return { ok: false, reason: 'invalid', message: safeMessage };
   }
 
   /**
    * Test server connection
    */
   async testConnection(host, password, protocol = 'http') {
+    const cleanHost = host.replace(/^https?:\/\//, '');
+
+    // Try to verify password - distinguishes unreachable server from wrong password
+    const verification = await this.verifyPassword(cleanHost, password, protocol);
+    if (!verification.ok) {
+      return { success: false, error: verification.message, reason: verification.reason };
+    }
+
+    // Try to fetch channels (read-only, should work if server is up)
     try {
-      const cleanHost = host.replace(/^https?:\/\//, '');
-      
-      // Try to verify password
-      const isValid = await this.verifyPassword(cleanHost, password, protocol);
-      if (!isValid) {
-        return { success: false, error: 'Invalid password' };
-      }
-      
-      // Try to fetch channels (read-only, should work if server is up)
       const response = await fetch(`${protocol}://${cleanHost}/api/channels`, {
         headers: {
           'X-UI-Password': password
         }
       });
-      
+
       if (!response.ok) {
-        return { success: false, error: `Server returned ${response.status}` };
+        return { success: false, error: `Server returned ${response.status}`, reason: 'error' };
       }
-      
+
       return { success: true };
     } catch (err) {
-      return { success: false, error: err.message };
+      return { success: false, error: `Could not reach server at ${cleanHost}. Check the address and that the server is running.`, reason: 'unreachable' };
     }
   }
 }

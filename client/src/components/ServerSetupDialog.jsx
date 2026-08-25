@@ -28,6 +28,9 @@ export default function ServerSetupDialog({ open, onComplete }) {
   });
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState('');
+  // 'unreachable' (can't reach the server at all) vs 'invalid' (server
+  // reached, password rejected) get different Alert severities below.
+  const [errorReason, setErrorReason] = useState('error');
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -37,6 +40,7 @@ export default function ServerSetupDialog({ open, onComplete }) {
   const handleTest = async () => {
     if (!formData.host || !formData.password) {
       setError('Host and password are required');
+      setErrorReason('error');
       return;
     }
 
@@ -44,11 +48,12 @@ export default function ServerSetupDialog({ open, onComplete }) {
     setError('');
 
     const result = await serverManager.testConnection(formData.host, formData.password);
-    
+
     setTesting(false);
 
     if (!result.success) {
       setError(result.error || 'Connection test failed');
+      setErrorReason(result.reason === 'unreachable' ? 'warning' : 'error');
     } else {
       setError('');
       alert('✓ Connection successful!');
@@ -58,6 +63,7 @@ export default function ServerSetupDialog({ open, onComplete }) {
   const handleSubmit = async () => {
     if (!formData.host || !formData.password || !formData.callsign) {
       setError('Host, password, and callsign are required');
+      setErrorReason('error');
       return;
     }
 
@@ -69,10 +75,11 @@ export default function ServerSetupDialog({ open, onComplete }) {
 
     // Test connection first
     const result = await serverManager.testConnection(cleanHost, formData.password);
-    
+
     if (!result.success) {
       setTesting(false);
       setError(result.error || 'Connection failed. Please check your settings.');
+      setErrorReason(result.reason === 'unreachable' ? 'warning' : 'error');
       return;
     }
 
@@ -112,7 +119,7 @@ export default function ServerSetupDialog({ open, onComplete }) {
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
           {error && (
-            <Alert severity="error">{error}</Alert>
+            <Alert severity={errorReason}>{typeof error === 'string' ? error : 'Connection failed.'}</Alert>
           )}
           
           <TextField

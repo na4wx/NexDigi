@@ -2,6 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "nexdigi-server-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:server"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
       "name": "nexdigi-client-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev:client"],
