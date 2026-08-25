@@ -229,8 +229,8 @@ class RFTransport extends Transport {
       throw new Error(`Channel ${this.channelId} not available`);
     }
 
-    // Use ChannelManager's transmit method
-    this.channelManager.transmit(this.channelId, frame);
+    // Use ChannelManager's actual send method (there is no .transmit())
+    this.channelManager.sendFrame(this.channelId, frame);
   }
 
   /**
@@ -271,14 +271,15 @@ class RFTransport extends Transport {
       services: this.config.services || []
     });
 
-    // Send as UI frame (broadcast)
-    const ax25 = require('../ax25');
-    const uiFrame = ax25.buildUIFrame(
-      this.localCallsign,
-      'CQ',
-      helloPacket,
-      BACKBONE_PID
-    );
+    // Send as UI frame (broadcast) - ax25.js exports buildAx25Frame, not
+    // buildUIFrame (which doesn't exist); control defaults to UI (0x03).
+    const { buildAx25Frame } = require('../ax25');
+    const uiFrame = buildAx25Frame({
+      dest: 'CQ',
+      src: this.localCallsign,
+      pid: BACKBONE_PID,
+      payload: helloPacket
+    });
 
     this._transmitFrame(uiFrame);
     console.log('[RFTransport] Sent HELLO broadcast');
@@ -335,13 +336,13 @@ class RFTransport extends Transport {
    * @private
    */
   async _sendBroadcast(destination, data) {
-    const ax25 = require('../ax25');
-    const uiFrame = ax25.buildUIFrame(
-      this.localCallsign,
-      destination,
-      data,
-      BACKBONE_PID
-    );
+    const { buildAx25Frame } = require('../ax25');
+    const uiFrame = buildAx25Frame({
+      dest: destination,
+      src: this.localCallsign,
+      pid: BACKBONE_PID,
+      payload: data
+    });
 
     this._transmitFrame(uiFrame);
     this._updateMetrics('send', data.length);

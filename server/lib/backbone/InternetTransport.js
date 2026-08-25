@@ -179,6 +179,15 @@ class InternetTransport extends Transport {
 
     // Try to extract complete packets
     while (client.buffer.length >= 64) { // Minimum header size
+      // A prior packet in this same buffer may have already ended the
+      // connection (e.g. an unauthenticated client sending something
+      // other than HELLO first - see _processPacket). Stop parsing the
+      // rest of the buffer once that happens instead of continuing to
+      // dispatch packets - including a legitimate HELLO right behind the
+      // bad packet - against an already-closed socket.
+      if (client.socket.destroyed || client.socket.writableEnded) {
+        break;
+      }
       try {
         // Try to decode packet
         const packet = PacketFormat.decode(client.buffer);
@@ -223,7 +232,7 @@ class InternetTransport extends Transport {
       client.callsign = packet.source;
       client.authenticated = true;
       client.lastSeen = Date.now();
-      
+
       // Extract services from HELLO payload
       try {
         const info = JSON.parse(packet.payload.toString('utf8'));
@@ -232,9 +241,16 @@ class InternetTransport extends Transport {
         console.warn('[InternetTransport] Failed to parse HELLO services:', error.message);
         client.services = [];
       }
-      
+
+      // Mesh mode: both sides dial each other, so a second (redundant)
+      // connection to a peer we're already talking to is expected. Keep
+      // whichever one is newest; the older socket's own 'close' handler
+      // will clean itself out of this.clients when it eventually times out.
+      if (this.clients.has(client.callsign)) {
+        console.log(`[InternetTransport] Replacing existing connection for ${client.callsign} with a newer one`);
+      }
       this.clients.set(client.callsign, client);
-      
+
       console.log(`[InternetTransport] Authenticated ${client.callsign}, services: ${client.services.join(', ')}`);
       this.emit('connection', client.callsign);
 
@@ -307,6 +323,7 @@ class InternetTransport extends Transport {
       socket.on('close', () => {
         console.log(`[InternetTransport] Disconnected from ${callsign}`);
         this.clients.delete(callsign);
+        this._pendingOutboundClients?.delete(callsign);
         this.emit('disconnect', callsign);
         
         // Auto-reconnect to hub in client mode
@@ -326,14 +343,24 @@ class InternetTransport extends Transport {
         socket,
         buffer: Buffer.alloc(0),
         callsign,
-        authenticated: true // Outgoing connection
+        // Not authenticated (and not yet in this.clients) until the
+        // socket actually finishes connecting - see _onPeerConnected.
+        // Marking this true synchronously here (before the TCP handshake
+        // even completes) made this socket immediately eligible for the
+        // mesh's broadcast-to-all-authenticated-clients path (CQ sends),
+        // which could queue a KEEPALIVE broadcast onto this socket ahead
+        // of our own HELLO - the receiving end enforces HELLO-must-be-
+        // first, so it would reject the connection right as our real
+        // HELLO arrived behind it.
+        authenticated: false
       };
 
       socket.on('data', (data) => {
         this._handleData(client, data);
       });
 
-      this.clients.set(callsign, client);
+      this._pendingOutboundClients = this._pendingOutboundClients || new Map();
+      this._pendingOutboundClients.set(callsign, client);
     });
   }
 
@@ -409,6 +436,18 @@ class InternetTransport extends Transport {
    */
   _onPeerConnected(socket, callsign) {
     console.log(`[InternetTransport] Connected to ${callsign}`);
+
+    // Now that the TCP handshake has actually completed, promote the
+    // pending client to authenticated and make it visible to send()'s
+    // broadcast/direct-send paths (see _connectToPeer for why this can't
+    // happen any earlier).
+    const client = this._pendingOutboundClients?.get(callsign);
+    if (client) {
+      client.authenticated = true;
+      this.clients.set(callsign, client);
+      this._pendingOutboundClients.delete(callsign);
+    }
+
     this.emit('connection', callsign);
 
     // Send HELLO packet

@@ -621,22 +621,28 @@ class BBSSync extends EventEmitter {
       const callsign = neighbor.callsign;
       const lastSync = this.lastSyncTime.get(callsign) || 0;
       const timeSinceSync = Date.now() - lastSync;
-      
+
       // Determine if full or incremental sync
       const sinceTimestamp = timeSinceSync > this.incrementalThreshold ? null : lastSync;
-      
-      // Send Bloom filter if enabled for efficient sync
+
+      // Sync every due area, not just the highest-priority one - areasToSync
+      // is already priority-sorted (see _getAreasToSync), so this still
+      // processes them in priority order, it just doesn't silently mark
+      // lower-priority due areas as synced without ever syncing them.
       if (this.useBloomFilters && areasToSync.length > 0) {
-        await this._sendBloomFilterSync(callsign, areasToSync[0]); // Sync highest priority area first
+        for (const area of areasToSync) {
+          await this._sendBloomFilterSync(callsign, area);
+          this._updateAreaSyncTime(area);
+          // Rate limiting: small delay between areas
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
       } else {
         await this.requestSync(callsign, sinceTimestamp);
+        for (const area of areasToSync) {
+          this._updateAreaSyncTime(area);
+        }
       }
-      
-      // Update area sync times
-      for (const area of areasToSync) {
-        this._updateAreaSyncTime(area);
-      }
-      
+
       // Rate limiting: small delay between nodes
       await new Promise(resolve => setTimeout(resolve, 100));
     }

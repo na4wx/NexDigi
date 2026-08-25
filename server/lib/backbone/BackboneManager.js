@@ -110,7 +110,10 @@ class BackboneManager extends EventEmitter {
       nodeId: this.localCallsign,
       interval: this.config.heartbeatInterval || 300000, // 5 minutes default
       timeout: this.config.neighborTimeout || 900000, // 15 minutes default
-      getServices: () => this.config.services || [],
+      // this.config.services is { offer: [...], request: [...] } (see
+      // backboneSettings.json), not itself an array of service names -
+      // heartbeats need the actual offered-service list.
+      getServices: () => this.config.services?.offer || [],
       getMetrics: () => this._collectMetrics()
     });
 
@@ -183,7 +186,12 @@ class BackboneManager extends EventEmitter {
     // Initialize user registry
     this.userRegistry = new UserRegistry({
       nodeCallsign: this.localCallsign,
-      dataDir: this.config.userRegistry?.dataDir || './data',
+      // A bare relative default here would resolve against process.cwd()
+      // (wherever the server happened to be launched from) instead of a
+      // fixed location, scattering/losing user-registry.json depending on
+      // how the process is started - anchor it to this config file's
+      // directory instead, same fix as MessageStore's dataDir above.
+      dataDir: this.config.userRegistry?.dataDir || path.join(path.dirname(this.configPath), 'user-registry'),
       syncInterval: this.config.userRegistry?.syncInterval || 300000, // 5 minutes
       cleanupInterval: this.config.userRegistry?.cleanupInterval || 3600000, // 1 hour
       entryTTL: this.config.userRegistry?.entryTTL || 86400000 // 24 hours
@@ -698,7 +706,7 @@ class BackboneManager extends EventEmitter {
         neighbor.transports.push(transportId);
       }
       neighbor.lastSeen = Date.now();
-      neighbor.services = heartbeatData.services || [];
+      neighbor.services = Array.isArray(heartbeatData.services) ? heartbeatData.services : [];
 
       // Update services map
       for (const service of neighbor.services) {
@@ -1521,15 +1529,17 @@ class BackboneManager extends EventEmitter {
       }
 
       try {
-        const packet = PacketFormat.create({
+        const packet = PacketFormat.encode({
           type: PacketType.KEEPALIVE,
           source: this.localCallsign,
-          destination: '*', // Broadcast
+          destination: 'CQ', // Broadcast - see Transport.send()'s destination === 'CQ' handling
           payload: payload,
           priority: Priority.LOW
         });
 
-        await transport.broadcast(packet);
+        // Transports don't have a separate broadcast() method - 'CQ' as the
+        // destination is what triggers broadcast behavior in send() itself.
+        await transport.send('CQ', packet, { priority: Priority.LOW });
       } catch (error) {
         console.error(`[BackboneManager] Failed to broadcast heartbeat on ${id}:`, error.message);
       }
