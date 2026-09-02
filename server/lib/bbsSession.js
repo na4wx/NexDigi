@@ -737,14 +737,22 @@ class BBSSessionManager {
       });
 
       chatSession.on('broadcast', (data) => {
-        // Format and send broadcast message
-        const prefix = data.fromCallsign ? `[${data.fromCallsign}] ` : '';
-        this.sendI(remoteCall, channel, prefix + data.text + '\r\n');
+        // Format and send broadcast message. ChatManager.broadcastToRoom()
+        // emits { roomName, type: 'chat-message', message: { from, text, ... } }
+        // (see chatManager.js sendMessage()/broadcastToRoom()) — the from/text
+        // fields are nested under .message, not flat on the event itself.
+        const from = data.message && data.message.from;
+        const text = data.message && data.message.text;
+        const prefix = from ? `[${from}] ` : '';
+        this.sendI(remoteCall, channel, prefix + (text || '') + '\r\n');
       });
 
       chatSession.on('private-message', (data) => {
-        // Format and send private message
-        this.sendI(remoteCall, channel, `[PM from ${data.fromCallsign}] ${data.text}\r\n`);
+        // Format and send private message. ChatManager.sendPrivateMessage()
+        // emits the message object directly (from/text flat, no .message
+        // wrapper) via toSession.emit('private-message', message) — unlike
+        // the broadcast event above, this one is NOT nested.
+        this.sendI(remoteCall, channel, `[PM from ${data.from}] ${data.text}\r\n`);
       });
 
       chatSession.on('disconnect', () => {
